@@ -73,15 +73,11 @@ class SettingsDialog(QDialog):
         llm: LLMClient,
         data_dir: str,
         parent: QWidget | None = None,
-        store=None,
-        session_getter=None,
     ) -> None:
         super().__init__(parent)
         self.cfg = cfg
         self.llm = llm
         self.data_dir = data_dir
-        self.store = store
-        self.session_getter = session_getter or (lambda: "")
         self.setWindowTitle("模型设置")
         self.setWindowIcon(app_icon())
         self.setStyleSheet(STYLE)
@@ -163,12 +159,10 @@ class SettingsDialog(QDialog):
         model_layout.addStretch(1)
 
         self.tabs.addTab(model_tab, "模型")
-        self.memory_widget = None
-        if self.store is not None:
-            from .memory_widget import MemoryWidget
+        from .memory_widget import MemoryWidget
 
-            self.memory_widget = MemoryWidget(self.store, self.session_getter)
-            self.tabs.addTab(self.memory_widget, "长期记忆")
+        self.memory_widget = MemoryWidget(self.cfg, self.cfg.data_dir)
+        self.tabs.addTab(self.memory_widget, "长期记忆")
         layout.addWidget(self.tabs, 1)
 
         buttons = QHBoxLayout()

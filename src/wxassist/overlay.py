@@ -487,7 +487,7 @@ class Overlay(QWidget):
         tokens = analysis.tokens_in + analysis.tokens_out
         token_text = f" · {tokens} tok" if tokens else ""
         context_text = f" · {analysis.context_count} 条上下文" if analysis.context_count else ""
-        memory_text = f" · 记忆 {analysis.memory_count}" if analysis.memory_count else ""
+        memory_text = f" · 资料 {analysis.memory_chars} 字" if analysis.memory_chars else ""
         self.status_label.setText(
             f"生成完成 · {analysis.latency_ms}ms · {source}{context_text}{memory_text}{token_text}"
         )

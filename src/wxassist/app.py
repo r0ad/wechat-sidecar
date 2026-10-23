@@ -534,13 +534,7 @@ class AppController:
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
             self._settings_dialog.raise_()
             return
-        dialog = SettingsDialog(
-            self.cfg,
-            self.llm,
-            self.cfg.data_dir,
-            store=self.store,
-            session_getter=self._session,
-        )
+        dialog = SettingsDialog(self.cfg, self.llm, self.cfg.data_dir)
         dialog.saved.connect(self._apply_settings)
         self._settings_dialog = dialog
         _force_show(dialog)

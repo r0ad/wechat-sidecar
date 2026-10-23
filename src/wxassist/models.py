@@ -97,32 +97,13 @@ class Analysis:
     tokens_in: int = 0
     tokens_out: int = 0
     context_count: int = 0
-    memory_count: int = 0
+    memory_chars: int = 0
     provider: str = ""
     model: str = ""
 
     @property
     def ok(self) -> bool:
         return not self.error and bool(self.candidates)
-
-
-@dataclass
-class MemoryEntry:
-    """长期记忆/业务知识条目。"""
-
-    id: int
-    scope: str = "global"  # global | session
-    session: str = ""
-    kind: str = "fact"  # qa | fact | preference | instruction
-    title: str = ""
-    content: str = ""
-    keywords: str = ""
-    enabled: bool = True
-    pinned: bool = False
-    weight: float = 1.0
-    source: str = "manual"
-    created_at: float = 0.0
-    updated_at: float = 0.0
 
 
 @dataclass

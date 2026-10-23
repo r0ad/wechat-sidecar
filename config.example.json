@@ -25,10 +25,7 @@
   },
   "memory": {
     "enabled": true,
-    "top_k": 5,
-    "budget_chars": 1500,
-    "max_entry_chars": 600,
-    "pinned_always": true
+    "max_chars": 200000
   },
   "privacy": {
     "redact_before_send": true,

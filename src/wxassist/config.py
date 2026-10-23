@@ -58,10 +58,8 @@ class PrivacyConfig:
 @dataclass
 class MemoryConfig:
     enabled: bool = True
-    top_k: int = 5
-    budget_chars: int = 1500
-    max_entry_chars: int = 600
-    pinned_always: bool = True
+    max_chars: int = 200_000  # 直接注入上限，防止误贴超大文件把请求撑爆
+
 
 
 @dataclass
