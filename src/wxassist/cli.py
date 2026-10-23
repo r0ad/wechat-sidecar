@@ -4,39 +4,42 @@
   python run.py                 # 启动悬浮窗（需要微信已登录、窗口不要最小化）
   python run.py --selftest      # 不开 UI，验证截屏 + OCR + 解析
   python run.py --selftest --snapshot snapshots/calib.png
-  python run.py --demo          # 合成对话演示（Mock 模型，不需要 API Key）
-  python run.py --screenshot docs/overlay.png
+  python run.py --test-llm      # 只测试大模型连接（不启动 UI）
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
 import time
 
 from . import __version__
 from .config import Config
+from .providers import PRESETS, get_preset
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wxassist",
-        description="微信 AI 回复助手：截屏 + 本地 OCR + 候选回复，永不自动发送",
+        description="微信 AI 回复助手：截屏 + 本地 OCR + 大模型候选回复，永不自动发送",
     )
     parser.add_argument("--version", action="version", version=f"wxassist {__version__}")
     parser.add_argument("--config", help="配置文件路径（默认 ./config.local.json）")
-    parser.add_argument("--provider", choices=["deepseek", "openai", "ollama", "mock"])
+    parser.add_argument(
+        "--provider",
+        choices=[preset.key for preset in PRESETS],
+        help="模型服务商（默认沿用配置文件；界面里也能改）",
+    )
     parser.add_argument("--model")
     parser.add_argument("--base-url")
     parser.add_argument("--interval", type=int, help="采集间隔毫秒")
     parser.add_argument("--mode", choices=["copy", "paste"], help="填入方式")
     parser.add_argument("--hotkey", help="显示/隐藏悬浮窗的全局热键，空字符串关闭")
     parser.add_argument("--no-hotkey", action="store_true", help="不注册全局热键")
-    parser.add_argument("--demo", action="store_true", help="合成对话演示模式")
     parser.add_argument("--selftest", action="store_true", help="无 UI 自检：截屏+OCR+解析")
+    parser.add_argument("--set-key", metavar="KEY", help="保存 API Key 到本机加密存储后退出")
+    parser.add_argument("--test-llm", action="store_true", help="测试大模型连接后退出")
     parser.add_argument("--snapshot", help="自检时把标注结果保存为图片")
-    parser.add_argument("--screenshot", help="用演示数据渲染悬浮窗并截图后退出")
     parser.add_argument("--debug", action="store_true", help="打印更多诊断信息")
     return parser
 
@@ -44,6 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
 def apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
     if args.provider:
         cfg.llm.provider = args.provider
+        preset = get_preset(args.provider)
+        if preset and preset.base_url:
+            if not args.base_url:
+                cfg.llm.base_url = preset.base_url
+            if not args.model:
+                cfg.llm.model = preset.model
+            if preset.key_env:
+                cfg.llm.api_key_env = preset.key_env
     if args.model:
         cfg.llm.model = args.model
     if args.base_url:
@@ -63,20 +74,40 @@ def main(argv: list[str] | None = None) -> int:
     cfg = Config.load(args.config)
     apply_overrides(cfg, args)
 
+    if args.set_key:
+        from .secrets_store import save_api_key
+
+        try:
+            save_api_key(cfg.data_dir, cfg.llm.provider, args.set_key.strip())
+        except Exception as exc:
+            print(f"[x] 保存失败：{exc}")
+            return 2
+        print(f"[ok] 已把 {cfg.llm.provider} 的 Key 保存到本机加密存储")
+        return 0
+
+    if args.test_llm:
+        return run_llm_test(cfg)
+
     if args.selftest:
         return run_selftest(cfg, args.snapshot, args.debug)
 
-    # 演示/截图模式不落到真实数据库里
-    if args.demo or args.screenshot:
-        cfg.data_dir = tempfile.mkdtemp(prefix="wxassist-demo-")
+    from .app import AppController
 
-    from .app import AppController, DemoController, run_screenshot_mode
-
-    if args.screenshot:
-        return run_screenshot_mode(cfg, args.screenshot)
-    if args.demo:
-        return DemoController(cfg).run()
     return AppController(cfg).run()
+
+
+def run_llm_test(cfg: Config) -> int:
+    from .llm import LLMClient
+
+    client = LLMClient(cfg.llm, cfg.data_dir)
+    print(f"服务商：{cfg.llm.provider}  Base URL：{cfg.llm.base_url}  模型：{cfg.llm.model}")
+    print(f"API Key：{'已配置' if client.has_key() else '未配置'}")
+    result = client.test_connection()
+    if result.ok:
+        print(f"[ok] {result.message} · {result.latency_ms}ms")
+        return 0
+    print(f"[x] {result.message}")
+    return 1
 
 
 def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:

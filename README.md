@@ -1,9 +1,11 @@
 # 微信 AI 回复助手（wxassist）
 
-> 旁挂式微信回复助手：**只截屏 + 本地 OCR** 读取当前会话 → 大模型判断对方意图 → 给出 3 条候选回复 → 一键填入输入框。
+> 旁挂式微信回复助手：**只截屏 + 本地 OCR** 读取当前会话 → 调用大模型（DeepSeek / OpenAI 兼容）判断对方意图 → 给出 3 条候选回复 → 一键填入输入框，可继续让 AI 改写、总结会话、学习你的说话风格。
 > **不注入、不破解、不读微信数据库、永不自动发送。**
 
-![悬浮窗界面](docs/overlay.png)
+![悬浮窗](docs/overlay.png)
+
+![模型设置](docs/settings.png)
 
 ---
 
@@ -13,9 +15,10 @@
 - [功能](#功能)
 - [环境要求](#环境要求)
 - [安装](#安装)
-- [配置 API Key](#配置-api-key)
+- [配置大模型](#配置大模型)
 - [运行](#运行)
 - [使用流程](#使用流程)
+- [AI 能力说明](#ai-能力说明)
 - [工作原理](#工作原理)
 - [配置项](#配置项)
 - [隐私与安全边界](#隐私与安全边界)
@@ -40,20 +43,27 @@
 | **截图 + 本地 OCR（本项目）** | **只读当前会话** | **看不到历史、图片/语音有损** |
 | 官方企微 / 微信客服 | 合规自动回复 | 读不到个人微信私聊，需企业资质 |
 
-本项目选择最后一种中风险最低的形态：**能力换安全**。不碰客户端进程、不碰数据库、不按回车，
-所有数据留在本机，封号面约等于零。
+本项目选择风险最低的形态：**能力换安全**。不碰客户端进程、不碰数据库、不按回车，所有数据留在本机。
 
 ## 功能
 
 - **实时监听**：Windows Graphics Capture 按窗口句柄采集，微信被其他窗口遮挡也能读；只在画面变化时出帧。
 - **气泡识别**：颜色分割找气泡（己方绿 / 对方白），OCR 行归组、左右分栏、时间分隔线与系统消息过滤。
-- **跨帧去重**：滚动、重绘、重复文本都不会重复触发；切换会话自动重建基线。
+- **跨帧去重**：滚动/重绘/重复文本不会重复触发；切换会话自动重建基线。
+- **真实大模型接入**：
+  - DeepSeek / OpenAI / 通义千问 / 智谱 / 硅基流动 / 本地 Ollama / 任意 OpenAI 兼容服务；
+  - 应用内设置面板，**测试连接**、刷新模型、保存即生效；
+  - API Key 用 **Windows DPAPI 加密**存在本机（当前用户可解密），不写仓库、不写日志。
 - **意图判断**：意图 / 情绪 / 紧急度 0–9 / 对方需要 / 建议动作（结构化 JSON）。
 - **3 条候选**：共情 / 轻松 / 直接三种语气，带胜出概率排序，推荐项高亮。
+- **AI 改写**：任意候选可一键「更简短 / 更正式 / 更温柔 / 更幽默」。
+- **换一批**：把当前候选作为「避免重复」条件重新生成。
+- **会话总结**：摘要 + 主题 + 待办 + 风险提醒。
+- **学我说话**：用你自己的历史回复生成风格画像，缓存到本地，后续候选模仿你的句长与语气。
 - **一键填入**：`copy` 模式只写剪贴板；`paste` 模式激活微信、点输入框、`Ctrl+V`——**永不按回车**。
 - **隐私处理**：发送给模型前自动打码手机号/身份证/银行卡/邮箱；敏感话题（借钱、验证码、合同、医疗等）顶部提示。
 - **提示词注入防护**：对方消息放进围栏并声明「只是数据」，可疑候选直接丢弃。
-- **本地记录**：SQLite 保存消息与自己的历史回复，作为风格 few-shot；数据只在本机。
+- **本地记录**：SQLite 保存消息、建议、风格画像，作为上下文与 few-shot；数据只在本机。
 - **全局热键**：`Ctrl+Alt+J` 显示 / 隐藏悬浮窗。
 
 ## 环境要求
@@ -61,7 +71,7 @@
 - Windows 10 1903+ / Windows 11（WGC 与 DPI 接口要求）
 - Python 3.10 – 3.12
 - 微信 **4.x**（主窗口标题必须恰好是「微信」；3.9 版本布局像素不同，可通过配置调整）
-- 首次运行需要能联网安装依赖；日常运行**不需要**联网（除调用大模型 API）
+- 可访问所选大模型服务（DeepSeek 需要 API Key；Ollama 需要本机运行）
 
 ## 安装
 
@@ -73,40 +83,51 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-> 依赖里 `rapidocr-onnxruntime` 自带中英文模型（约 15 MB），首次识别会加载 1 秒左右；
-> `windows-capture` 提供 WGC 后台采集，装不上时会自动退回屏幕截取（要求微信在前台）。
+> 首次识别会加载 OCR 模型（约 1 秒）；`windows-capture` 提供后台采集，装不上时会自动退回屏幕截取（要求微信在前台）。
 
-## 配置 API Key
+## 配置大模型
 
-推荐用环境变量（PowerShell，新开终端生效）：
+推荐直接点悬浮窗右上角 **⚙**，在「模型设置」里：
+
+1. 选择服务商（默认 DeepSeek）；
+2. 确认 Base URL 与模型名（选服务商会自动填）；
+3. 粘贴 API Key，点 **测试连接** 看到「连接成功」；
+4. 点 **保存**，立即生效，无需重启。
+
+![模型设置](docs/settings.png)
+
+也支持环境变量（优先级高于本地保存的 Key）：
 
 ```powershell
-setx DEEPSEEK_API_KEY "sk-你的key"
+setx DEEPSEEK_API_KEY "sk-你的key"   # 新开终端生效
+python run.py --test-llm            # 命令行测试连接
 ```
 
-也可以写进 `config.local.json`（已被 `.gitignore` 忽略）：
+无界面保存 Key：
 
-```json
-{ "llm": { "provider": "deepseek", "model": "deepseek-chat" } }
+```powershell
+python run.py --set-key "sk-你的key"
 ```
 
-支持的 provider：
+服务商预设（都走 OpenAI 兼容接口，可自定义）：
 
-| provider | base_url | 说明 |
+| 服务商 | Base URL | 默认模型 |
 |---|---|---|
-| `deepseek` | `https://api.deepseek.com/v1` | 默认，中文与价格都合适 |
-| `openai` | `https://api.openai.com/v1` | 需要改 `model` |
-| `ollama` | `http://localhost:11434/v1` | 本地模型，无需 Key |
-| `mock` | — | 不联网，用模板返回假候选（体验流程用） |
+| DeepSeek（推荐） | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| 阿里百炼 / 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-7B-Instruct` |
+| 本地 Ollama | `http://127.0.0.1:11434/v1` | `qwen2.5:7b` |
+| 自定义 | 任意 `/chat/completions` 兼容地址 | 手填 |
 
 ## 运行
 
 ```powershell
-python run.py                     # 正常启动（悬浮窗 + 后台监听）
-python run.py --demo              # 合成对话演示（Mock 模型，不需要 Key）
+python run.py                     # 启动悬浮窗 + 后台监听
+python run.py --test-llm          # 只测试大模型连接
 python run.py --selftest          # 无 UI 自检：截屏 + OCR + 解析
 python run.py --selftest --snapshot snapshots/calib.png --debug
-python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 ```
 
 常用参数：
@@ -123,12 +144,27 @@ python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 ## 使用流程
 
 1. 打开微信，进入任意聊天窗口（**不要最小化**，被其他窗口挡住没关系）。
-2. 运行 `python run.py`，悬浮窗会出现在微信窗口右侧（可拖动）。
-3. 对方发来新消息 → 悬浮窗显示原文、意图/情绪标签、3 条候选。
-4. 点「填入」：文字进入微信输入框（默认只复制到剪贴板），**你检查、修改、自己按发送**。
-5. `Ctrl+Alt+J` 显示/隐藏；「暂停采集」立即停止读屏；「退出」关闭程序。
+2. 运行 `python run.py`，悬浮窗出现在微信窗口旁边（可拖动）。
+3. 首次使用：点右上角 **⚙** 配置服务商与 API Key（可点「测试连接」验证）。
+4. 对方发来新消息 → 悬浮窗显示原文、意图/情绪标签、3 条候选（含耗时与 token 数）。
+5. 候选可「换一批」「改写」；也可以「总结会话」「学我说话」。
+6. 点「填入」：文字进入微信输入框（默认只复制到剪贴板），**你检查、修改、自己按发送**。
+7. `Ctrl+Alt+J` 显示/隐藏；「暂停采集」立即停止读屏；「退出」关闭程序。
 
 > 程序在任何情况下都不会按回车、不会点「发送」、不会替你回复。
+
+## AI 能力说明
+
+| 能力 | 触发方式 | 模型调用 | 说明 |
+|---|---|---|---|
+| 意图判断 | 新消息自动 | 1 次（JSON） | 意图/情绪/紧急度/需要/建议动作，为起草提供「小抄」 |
+| 候选起草 | 新消息自动 | 1 次（JSON） | 3 条不同语气候选 + 分数；失败自动重试一次 |
+| 换一批 | 按钮 | 2 次 | 把旧候选作为「避免重复」条件 |
+| 微调改写 | 候选卡片「改写」菜单 | 1 次 | 更简短 / 更正式 / 更温柔 / 更幽默 |
+| 会话总结 | 「总结会话」 | 1 次 | 摘要 + 主题 + 待办 + 风险 |
+| 风格学习 | 「学我说话」 | 1 次（每会话缓存） | 用自己历史回复生成风格画像，写入本地库 |
+
+成本参考：每条新消息默认 2 次调用（判断 + 起草），上下文最多 20 条文本；DeepSeek 下通常为几分钱/百条量级。
 
 ## 工作原理
 
@@ -139,18 +175,19 @@ python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 │ 3. RapidOCR 离线识别（关方向分类，约 200–400ms/帧）              │
 │ 4. 颜色分割找气泡 → OCR 行归组 → 左右分栏 → 过滤时间/系统消息    │
 │ 5. 跨帧对齐：上一帧最后一条做锚点，锚点之后才是新消息            │
+│ 6. 1.5 秒防抖：连续多条消息合并成一次分析                       │
 └──────────────────────────────┬─────────────────────────────────┘
                                │ 新消息（仅对方）
 ┌──────────────────────────────▼─────────────────────────────────┐
-│ 6. SQLite 落库 → 取最近 20 条 + 自己的历史回复（风格样本）        │
-│ 7. 脱敏 → 第 1 次模型调用：意图判断（JSON）                      │
-│ 8. 第 2 次模型调用：起草 3 条候选（JSON，带分数）                │
-│ 9. 过滤：复述对方 / 重复 / 超长 / 注入候选 / 敏感话题提示         │
+│ 7. SQLite 落库 → 最近 20 条 + 自己的历史回复 + 风格画像          │
+│ 8. 脱敏 → 调用大模型：意图判断（JSON）                           │
+│ 9. 再调用一次：起草 3 条候选（JSON，带分数；失败自动修复重试）   │
+│ 10. 过滤：复述对方 / 重复 / 超长 / 注入候选 / 敏感话题提示       │
 └──────────────────────────────┬─────────────────────────────────┘
                                │ Signal（跨线程）
 ┌──────────────────────────────▼─────────────────────────────────┐
-│ 10. 悬浮窗展示（overlay.py）                                    │
-│ 11. 点「填入」→ 剪贴板 + 可选 Ctrl+V（filler.py，绝不回车）      │
+│ 11. 悬浮窗展示（overlay.py）                                    │
+│ 12. 点「填入」→ 剪贴板 + 可选 Ctrl+V（filler.py，绝不回车）      │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -158,32 +195,39 @@ python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 |---|---|
 | `capture.py` | 找微信窗口、WGC/GDI 采集、DPI 缩放 |
 | `layout.py` | 聊天面板区域计算、颜色分割、OCR 行 → 气泡 |
-| `ocr.py` | RapidOCR 封装（懒加载、只识别面板区域） |
+| `ocr.py` | RapidOCR 封装（懒加载、只识别面板区域、预热） |
 | `tracker.py` | 跨帧对齐与会话切换 |
-| `engine.py` | 意图判断 + 候选起草 + 过滤排序 |
-| `prompts.py` | 提示词（围栏、注入防护、风格模仿） |
+| `engine.py` | 意图判断、候选起草、换一批、改写、总结、风格学习 |
+| `prompts.py` | 提示词（围栏、注入防护、风格模仿、改写/总结/风格） |
 | `privacy.py` | 脱敏、敏感话题识别 |
-| `llm.py` | DeepSeek / OpenAI / Ollama / Mock 客户端 |
-| `store.py` | SQLite：消息、建议、风格样本 |
-| `pipeline.py` | 采集主循环 |
-| `overlay.py` | PySide6 悬浮窗 |
+| `llm.py` | OpenAI 兼容客户端：重试、错误映射、测试连接、模型列表 |
+| `providers.py` | 服务商预设 |
+| `secrets_store.py` | API Key 的 DPAPI 加密存储 |
+| `store.py` | SQLite：消息、建议、风格画像 |
+| `pipeline.py` | 采集主循环、防抖 |
+| `overlay.py` / `settings_dialog.py` / `summary_dialog.py` | 悬浮窗、设置、总结界面 |
 | `filler.py` | 剪贴板与「只粘贴不发送」 |
 | `app.py` / `cli.py` | 组装与命令行入口 |
 
 ## 配置项
 
-完整示例见 [`config.example.json`](config.example.json)。复制为 `config.local.json` 后修改。
+完整示例见 [`config.example.json`](config.example.json)。运行时的配置（含模型选择）保存在
+`%LOCALAPPDATA%\wxassist\config.json`，**API Key 单独用 DPAPI 加密保存在同目录 `secret.bin`**。
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
-| `llm.provider` | `deepseek` | 模型提供方 |
-| `llm.api_key_env` | `DEEPSEEK_API_KEY` | 从哪个环境变量读 Key |
+| `llm.provider` | `deepseek` | 服务商 |
+| `llm.base_url` | `https://api.deepseek.com/v1` | OpenAI 兼容地址 |
 | `llm.model` | `deepseek-chat` | 模型名 |
+| `llm.api_key_env` | `DEEPSEEK_API_KEY` | 环境变量名（优先于本地 Key） |
+| `llm.temperature` | `0.8` | 生成温度 |
+| `llm.max_tokens` | `700` | 单次最大输出 |
 | `capture.interval_ms` | `700` | 采集间隔 |
 | `capture.chat_left_px` | `300` | 聊天面板左边界（微信 4.x @100% 缩放） |
 | `capture.header_px` | `64` | 标题栏高度 |
 | `capture.input_px` | `160` | 底部输入区高度 |
-| `capture.chat_left_ratio` | `0.26` | DPI 未知时的兜底比例 |
+| `capture.startup_warmup_sec` | `2.0` | 启动后多久内不生成建议 |
+| `capture.analysis_debounce_sec` | `1.5` | 连续消息合并窗口 |
 | `privacy.redact_before_send` | `true` | 发送前脱敏 |
 | `privacy.max_context_messages` | `20` | 上下文条数 |
 | `filler.mode` | `copy` | `copy` 只复制 / `paste` 自动粘贴（都不发送） |
@@ -196,8 +240,9 @@ python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 
 - **不注入、不 Hook、不读进程内存、不解密数据库**，只读屏幕像素。
 - 截图只在内存里（numpy），不落盘、不进日志、不上传。
-- 只把「当前会话最近 N 条文本」在脱敏后发给大模型；图片、语音、文件不发送。
-- 本地数据在 `%LOCALAPPDATA%\wxassist\wxassist.db`，可随时删除；`--demo` 模式使用临时目录。
+- 只把「当前会话最近 N 条文本」在脱敏后发给所选大模型；图片、语音、文件不发送。
+- API Key 使用 Windows DPAPI 加密（绑定当前用户），不接受明文写进 git；日志不记录 Key 与聊天内容。
+- 本地数据在 `%LOCALAPPDATA%\wxassist\`（数据库、加密 Key、日志），可随时删除。
 - 仍请遵守《微信个人账号使用规范》与《个人信息保护法》：
   - 只处理你自己的账号会话；
   - **不要**用于监控他人（员工/伴侣/客户）；
@@ -221,43 +266,46 @@ python run.py --screenshot docs/overlay.png   # 渲染界面截图后退出
 
 | 现象 | 处理 |
 |---|---|
-| 「没有找到微信窗口」 | 确认微信已登录、主窗口标题是「微信」、未被最小化 |
-| 「微信窗口被遮挡…」 | 未装 `windows-capture` 时只能截前台；`pip install windows-capture` 后支持后台采集 |
-| OCR 行数为 0 | 用 `--selftest --snapshot` 看截图：是否停在聊天页、是否有遮挡、`chat_left_px` 是否正确 |
-| 气泡识别成一片 | 打开 `--selftest --debug` 看 OCR 行坐标，调整 `chat_left_px/header_px/input_px` |
-| 「未配置 API Key」 | 设置环境变量后**新开终端**；或 `--provider mock` 先体验 |
+| 「没有找到微信窗口」 | 确认微信已登录、主窗口标题是「微信」、未关闭到托盘（点托盘图标） |
+| 「微信窗口被遮挡…」 | 未装 `windows-capture` 时只能截前台；`pip install windows-capture` |
+| 点 ⚙ 里「测试连接」失败 | 401：Key 错；404：Base URL 少了 `/v1` 或模型名错；超时：网络/代理 |
+| 悬浮窗显示「未配置模型」 | 点右上角 ⚙ 配置服务商 + Key，保存后立即生效 |
+| OCR 行数为 0 | `--selftest --snapshot` 看截图：是否停在聊天页、是否有遮挡、布局像素是否匹配 |
+| 气泡识别成一片 | `--selftest --debug` 看 OCR 行坐标，调整 `chat_left_px/header_px/input_px` |
 | 点「填入」没反应 | 默认 `copy` 模式只写剪贴板，去微信 `Ctrl+V`；`--mode paste` 才会自动粘贴 |
 | 杀软报毒 | 程序无注入行为；可用 `--selftest` 验证，或自行从源码运行 |
 
 ## 开发与测试
 
 ```powershell
-python -m pytest -q          # 全部测试（约 50 个，含端到端合成帧流程）
-python -m pytest tests/test_layout.py -q
+python -m pytest -q          # 63 个测试
 ```
 
-测试不依赖真实微信窗口，也不请求网络：气泡解析用合成图、模型用 Mock。
+测试不依赖真实微信窗口、不调用外部 API：
+气泡解析用合成图；大模型用**本地 HTTP 桩服务**验证 OpenAI 兼容请求的真实收发；
+单测里的 Mock 模型只存在于测试代码，产品界面不提供模拟数据。
 
 ```
 src/wxassist/     # 主程序
-tests/            # 单元测试 + 端到端流程测试
-docs/overlay.png  # 界面截图
+tests/            # 单元测试 + 本地 HTTP 桩 + 端到端合成帧流程
+docs/             # 界面截图
 run.py            # 入口
 config.example.json
 ```
 
-设计上的三个硬约束（改动时请保持）：
+设计上的四个硬约束（改动时请保持）：
 
 1. **不自动发送**：`filler.py` 里没有任何 Enter/发送按钮逻辑；
-2. **不持久化截图**：`Frame` 只在内存流转；
-3. **密钥/聊天内容不进 git**：`.gitignore` 已排除 `config.local.json`、`snapshots/`、`data/`。
+2. **不持久化截图**：截图只在内存流转；
+3. **Key 不进 git、不进日志**：DPAPI 加密文件 + 环境变量；
+4. **没有假数据**：候选只来自真实模型调用，失败就报错，不伪造。
 
 ## 路线图
 
 - [ ] 群聊发言人识别（气泡上方名字行归属）
-- [ ] 会话内图片文字 OCR（可选，需裁剪图片区域）
+- [ ] 会话内图片文字 OCR（可选）
 - [ ] 语音消息转写（本地 whisper，可选）
-- [ ] 风格学习：从历史回复自动提炼语气画像
+- [ ] 流式输出候选（降低首字延迟）
 - [ ] 多显示器 / 高 DPI 校准向导
 - [ ] 官方企业微信版本（会话存档 + 微信客服），面向客服场景
 
