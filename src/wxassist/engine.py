@@ -87,7 +87,7 @@ class SuggestEngine:
             analysis.urgency = 0
         analysis.need = str(intent.get("need", ""))
         analysis.action = str(intent.get("action", ""))
-        analysis.warning = self._build_warning(context, candidates)
+        analysis.warning = self._build_warning(incoming)
         analysis.latency_ms = _ms(started)
 
         if not candidates:
@@ -160,10 +160,10 @@ class SuggestEngine:
             candidate.selected = idx == 0
         return cleaned[:3]
 
-    def _build_warning(self, context: list[Message], candidates: list[Candidate]) -> str:
-        incoming_text = "\n".join(m.text for m in context if not m.is_me)
+    def _build_warning(self, incoming: list[Message]) -> str:
+        incoming_text = "\n".join(m.text for m in incoming)
         hits = sensitive_topics(incoming_text)
-        if any(looks_like_injection(m.text) for m in context if not m.is_me):
+        if any(looks_like_injection(m.text) for m in incoming):
             hits.append("可疑指令")
         if not hits:
             return ""

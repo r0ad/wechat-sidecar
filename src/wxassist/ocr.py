@@ -43,12 +43,16 @@ class OcrEngine:
         return self._engine is not None or not self._import_error
 
     def warmup(self) -> bool:
-        """提前加载模型；失败返回 False 而不是抛异常。"""
+        """提前加载模型并跑一次空图，避免首帧 OCR 出现 1s 级冷启动。"""
         try:
             self._ensure()
+            blank = np.zeros((32, 32, 3), dtype=np.uint8)
+            self._engine(blank, use_det=True, use_cls=False, use_rec=True)
             return True
         except OcrError:
             return False
+        except Exception:
+            return True
 
     # ---------- 识别 ----------
 

@@ -24,7 +24,16 @@ def test_input_box_point_center_of_chat_pane() -> None:
     x, y = input_box_point(win, chat_left_ratio=0.26)  # type: ignore[arg-type]
     chat_left = 100 + int(800 * 0.26)
     assert x == chat_left + (900 - chat_left) // 2
-    assert y == 200 + int(600 * 0.93)
+    assert y == 800 - int(600 * 0.12) // 2
+
+
+def test_input_box_point_with_dpi_and_pixels() -> None:
+    win = FakeWindow((100, 200, 900, 800))
+    x, y = input_box_point(  # type: ignore[arg-type]
+        win, chat_left_px=300, dpi_scale=1.0, input_px=160
+    )
+    assert x == 100 + 300 + (800 - 300) // 2
+    assert y == 800 - 80
 
 
 def test_region_uses_pixels_scaled_by_dpi() -> None:

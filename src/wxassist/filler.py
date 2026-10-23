@@ -43,22 +43,25 @@ def input_box_point(
     chat_left_px: int = 300,
     dpi_scale: float = 0.0,
     chat_left_ratio: float = 0.26,
+    input_px: int = 160,
 ) -> tuple[int, int]:
     """估算输入框中心点（客户区坐标 → 屏幕坐标）。
 
-    微信输入区在聊天面板底部；取面板水平中点、窗口高度 93% 处。
-    chat_left 与采集层保持一致：优先「固定像素 × DPI 缩放」，否则用比例。
+    水平取聊天面板中点；垂直取底部输入区中线（避开消息区和底部工具栏）。
     """
     left, top, right, bottom = win.client_bbox()
     width = right - left
     height = bottom - top
     if dpi_scale and dpi_scale > 0:
         chat_left = int(chat_left_px * dpi_scale)
+        input_height = int(input_px * dpi_scale)
     else:
         chat_left = int(width * chat_left_ratio)
+        input_height = int(height * 0.12)
     chat_left = max(0, min(width - 1, chat_left))
+    input_height = max(40, min(height // 3, input_height))
     x = left + chat_left + (width - chat_left) // 2
-    y = top + int(height * 0.93)
+    y = bottom - input_height // 2
     return x, y
 
 
@@ -85,6 +88,7 @@ def fill(
     chat_left_px: int = 300,
     dpi_scale: float = 0.0,
     chat_left_ratio: float = 0.26,
+    input_px: int = 160,
 ) -> str:
     """返回实际执行的动作：copied / pasted / 失败抛 FillError。"""
     copy_to_clipboard(text)
@@ -94,7 +98,7 @@ def fill(
     time.sleep(0.15)
     if not is_foreground(win.hwnd):
         raise FillError("微信窗口没有切到前台，已复制到剪贴板")
-    x, y = input_box_point(win, chat_left_px, dpi_scale, chat_left_ratio)
+    x, y = input_box_point(win, chat_left_px, dpi_scale, chat_left_ratio, input_px)
     _click(x, y)
     time.sleep(0.12)
     _ctrl_v()

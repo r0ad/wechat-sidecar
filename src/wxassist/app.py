@@ -104,6 +104,7 @@ class AppController:
                 chat_left_px=self.cfg.capture.chat_left_px,
                 dpi_scale=win.dpi_scale(),
                 chat_left_ratio=self.cfg.capture.chat_left_ratio,
+                input_px=self.cfg.capture.input_px,
             )
             if action == "pasted":
                 self.overlay.set_status("ok", "已填入输入框（未发送，请自己按回车）")
