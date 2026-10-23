@@ -191,10 +191,11 @@ class Overlay(QWidget):
         super().__init__()
         self.setWindowTitle("微信 AI 回复助手")
         self.setWindowIcon(app_icon())
+        # 不用 Tool 窗口：这样最小化后任务栏有图标可以点回来
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
+            | Qt.WindowType.Window
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet(STYLESHEET)
@@ -248,6 +249,7 @@ class Overlay(QWidget):
         hide_btn = QPushButton("—")
         hide_btn.setObjectName("ghost")
         hide_btn.setFixedSize(26, 22)
+        hide_btn.setToolTip("最小化到任务栏（也可用托盘图标或 Ctrl+Alt+J 恢复）")
         hide_btn.clicked.connect(self._hide_self)
         header.addWidget(hide_btn)
         layout.addLayout(header)
@@ -521,8 +523,12 @@ class Overlay(QWidget):
         self.debug_panel.setVisible(not self.debug_panel.isVisible())
 
     def _hide_self(self) -> None:
-        self.hide()
+        self.showMinimized()
         self.hidden_by_user.emit()
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        self.pause_btn.setText("继续采集" if paused else "暂停采集")
 
     # ---------- 交互 ----------
 

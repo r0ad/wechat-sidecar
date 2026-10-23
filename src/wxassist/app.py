@@ -9,7 +9,8 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import capture as capture_mod
 from .config import Config
@@ -20,6 +21,7 @@ from .llm import LLMClient
 from .models import Analysis, Message, SessionSummary
 from .overlay import Overlay, create_app
 from .pipeline import Pipeline
+from .resources import app_icon
 from .secrets_store import save_api_key
 from .settings_dialog import SettingsDialog
 from .store import Store
@@ -104,6 +106,10 @@ class AppController:
         self._settings_dialog: SettingsDialog | None = None
         self._summary_dialog: SummaryDialog | None = None
         self._auto_settings_opened = False
+        self.tray: QSystemTrayIcon | None = None
+        self._tray_hint_shown = False
+        self._tray_toggle: QAction | None = None
+        self._tray_pause: QAction | None = None
         self._hidden_by_auto = False
         self._manual_until = 0.0
         self._watch_timer: QTimer | None = None
@@ -132,6 +138,7 @@ class AppController:
         self.overlay.context_requested.connect(self._on_context)
         self.overlay.load_more_requested.connect(self._on_load_more)
         self.overlay.pin_toggled.connect(self._on_pin_toggled)
+        self.overlay.hidden_by_user.connect(self._on_hidden_by_user)
         self.bridge.context_updated.connect(self._on_context_updated)
 
     # ---------- 生命周期 ----------
@@ -145,6 +152,7 @@ class AppController:
             "已配置" if self.llm.has_key() else "未配置",
         )
         self.overlay.show()
+        self._setup_tray()
         self.overlay.set_model_ready(self.llm.has_key())
         self.overlay.set_pinned(not self.cfg.ui.auto_hide)
         self.overlay.set_status("ok", "正在连接微信窗口…")
@@ -174,11 +182,60 @@ class AppController:
         log.info("事件循环结束，退出码=%s", code)
         return code
 
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            log.info("系统托盘不可用，跳过托盘图标")
+            return
+        self.tray = QSystemTrayIcon(app_icon(), self.app)
+        self.tray.setToolTip("微信 AI 回复助手")
+        menu = QMenu()
+        self._tray_toggle = QAction("隐藏悬浮窗", menu)
+        self._tray_toggle.triggered.connect(self._toggle_overlay)
+        self._tray_pause = QAction("暂停采集", menu)
+        self._tray_pause.setCheckable(True)
+        self._tray_pause.toggled.connect(self._on_pause)
+        settings = QAction("模型设置…", menu)
+        settings.triggered.connect(self._open_settings)
+        quit_action = QAction("退出", menu)
+        quit_action.triggered.connect(self.app.quit)
+        menu.addAction(self._tray_toggle)
+        menu.addAction(self._tray_pause)
+        menu.addSeparator()
+        menu.addAction(settings)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+        log.info("系统托盘图标已创建")
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._toggle_overlay()
+
+    def _on_hidden_by_user(self) -> None:
+        self._sync_tray_toggle()
+        if self.tray is not None and not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            self.tray.showMessage(
+                "微信 AI 回复助手",
+                "已最小化。点任务栏图标、双击托盘图标，或按 Ctrl+Alt+J 都能恢复。",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+
+    def _sync_tray_toggle(self) -> None:
+        if self._tray_toggle is None:
+            return
+        self._tray_toggle.setText("隐藏悬浮窗" if self.overlay.isVisible() else "显示悬浮窗")
+
     def shutdown(self) -> None:
         log.info("开始退出：停止采集与热键")
         if self.pipeline is not None:
             self.pipeline.stop()
         self.hotkeys.unregister_all()
+        if self.tray is not None:
+            self.tray.hide()
         try:
             self.store.close()
         except Exception:
@@ -258,7 +315,7 @@ class AppController:
         # 正在和悬浮窗交互（打开菜单/点按钮）时不要收起
         if QApplication.activePopupWidget() is not None:
             return
-        if self.overlay.isActiveWindow():
+        if self.overlay.isActiveWindow() or self.overlay.isMinimized():
             return
         dialogs_open = any(
             dialog is not None and dialog.isVisible()
@@ -341,6 +398,11 @@ class AppController:
     def _on_pause(self, paused: bool) -> None:
         if self.pipeline is not None:
             self.pipeline.pause(paused)
+        self.overlay.set_paused(paused)
+        if self._tray_pause is not None and self._tray_pause.isChecked() != paused:
+            self._tray_pause.blockSignals(True)
+            self._tray_pause.setChecked(paused)
+            self._tray_pause.blockSignals(False)
 
     # ---------- AI 功能 ----------
 
@@ -491,6 +553,12 @@ class AppController:
 
     def _toggle_overlay(self) -> None:
         self._manual_until = time.time() + 300
+        if self.overlay.isMinimized():
+            self.overlay.showNormal()
+            self.overlay.raise_()
+            self.overlay.activateWindow()
+            self._sync_tray_toggle()
+            return
         if self.overlay.isVisible():
             self.overlay.hide()
             self._hidden_by_auto = False
@@ -499,6 +567,7 @@ class AppController:
             self.overlay.raise_()
             self.overlay.activateWindow()
             self._hidden_by_auto = False
+        self._sync_tray_toggle()
 
     def _on_quit_clicked(self) -> None:
         log.warning("收到「退出」按钮点击")
