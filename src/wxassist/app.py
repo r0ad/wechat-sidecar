@@ -119,7 +119,7 @@ class AppController:
         self.bridge.summary_ready.connect(self._on_summary_ready)
         self.bridge.style_ready.connect(self._on_style_ready)
         self.bridge.refined.connect(self._on_refined)
-        self.bridge.session_changed.connect(self.overlay.set_session)
+        self.bridge.session_changed.connect(self._on_session_changed)
         self.overlay.fill_requested.connect(self._on_fill)
         self.overlay.copy_requested.connect(self._on_copy)
         self.overlay.regenerate_requested.connect(self._on_regenerate)
@@ -230,6 +230,10 @@ class AppController:
         self.overlay.set_context_count(total)
         if self.overlay.context_panel.isVisible():
             self._on_context()
+
+    def _on_session_changed(self, session: str) -> None:
+        self.overlay.set_session(session)
+        self.overlay.set_context_count(self.store.count_messages(session))
 
     def _on_context(self) -> None:
         self._touch()
