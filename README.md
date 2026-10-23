@@ -151,6 +151,22 @@ python run.py --selftest --snapshot snapshots/calib.png --debug
 | `--config path.json` | 指定配置文件 |
 | `--debug` | 自检时打印 OCR 明细 |
 
+## 打包成 exe
+
+```powershell
+pip install -r requirements-dev.txt
+python build.py                 # 目录版（推荐）：dist/wxassist/wxassist.exe
+python build.py --onefile       # 单文件版：dist/wxassist.exe
+python build.py --console       # 保留控制台窗口，排查启动问题
+```
+
+- 打包配置在 [`wxassist.spec`](wxassist.spec)，脚本在 [`build.py`](build.py)；
+- 默认是 **windowed + 目录版**：启动快、体积可控；`--onefile` 单文件启动会慢 3–8 秒；
+- 产物里已带图标、版本信息、RapidOCR 模型和 `config.example.json`；
+- 只能在 **同架构 Windows** 上打包（PyInstaller 不支持交叉编译）；
+- 首次运行 exe 同样点 ⚙ 配置 API Key；配置与数据仍然写到 `%LOCALAPPDATA%\wxassist\`；
+- 若被杀软误报，属于 PyInstaller 打包程序的常见误报，可把 `dist/wxassist` 加入信任，或改用源码运行。
+
 ## 使用流程
 
 1. 打开微信，进入任意聊天窗口（**不要最小化**，被其他窗口挡住没关系）。
