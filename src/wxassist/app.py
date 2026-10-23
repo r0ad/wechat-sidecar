@@ -29,7 +29,8 @@ class Bridge(QObject):
 
 class AppController:
     def __init__(self, cfg: Config) -> None:
-        capture_mod.enable_dpi_awareness()
+        # 注意：DPI 感知由 Qt 在创建 QApplication 时设置，这里不要再提前调用，
+        # 否则 Qt 会打印 SetProcessDpiAwarenessContext 失败的告警。
         self.cfg = cfg
         self.app: QApplication = create_app()
         self.overlay = Overlay()
@@ -175,13 +176,12 @@ class DemoController(AppController):
     ]
 
     def __init__(self, cfg: Config) -> None:
+        cfg.llm.provider = "mock"  # 演示模式不请求真实模型
         super().__init__(cfg)
         self._history: list[Message] = []
         self._step = 0
 
     def run(self) -> int:
-        self.cfg.llm.provider = "mock"
-        self.engine = SuggestEngine(LLMClient(self.cfg.llm), self.cfg, self.store)
         self.overlay.show()
         self.overlay.set_status("thinking", "演示模式：正在生成示例…")
         QTimer.singleShot(500, self._advance)

@@ -52,13 +52,26 @@ class OcrEngine:
 
     # ---------- 识别 ----------
 
-    def recognize(self, image: np.ndarray) -> list[OcrLine]:
-        """image: RGB ndarray → OCR 行列表（坐标基于传入图像）。"""
+    def recognize(
+        self, image: np.ndarray, bbox: tuple[int, int, int, int] | None = None
+    ) -> list[OcrLine]:
+        """image: RGB ndarray；bbox=(x0,y0,x1,y1) 时只识别该区域。
+
+        返回的坐标统一换算回整张 image 的坐标系。
+        """
+        height, width = image.shape[:2]
+        x0, y0, x1, y1 = bbox or (0, 0, width, height)
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(width, x1), min(height, y1)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return []
+        region = image[y0:y1, x0:x1]
         engine = self._ensure()
         # RapidOCR 内部按 OpenCV 习惯处理 ndarray（BGR），这里转一下保证颜色通道正确
-        bgr = np.ascontiguousarray(image[:, :, ::-1])
+        bgr = np.ascontiguousarray(region[:, :, ::-1])
         try:
-            result, _elapse = engine(bgr)
+            # 聊天文字都是水平的，关掉方向分类器省 ~20% 时间
+            result, _elapse = engine(bgr, use_det=True, use_cls=False, use_rec=True)
         except Exception as exc:  # pragma: no cover - 运行时异常
             raise OcrError(f"OCR 识别失败: {exc}") from exc
         if not result:
@@ -68,8 +81,8 @@ class OcrEngine:
             box, text, score = item[0], item[1], item[2]
             if not text or not str(text).strip():
                 continue
-            xs = [int(p[0]) for p in box]
-            ys = [int(p[1]) for p in box]
+            xs = [int(p[0]) + x0 for p in box]
+            ys = [int(p[1]) + y0 for p in box]
             lines.append(
                 OcrLine(
                     text=str(text).strip(),

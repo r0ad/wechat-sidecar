@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from wxassist.capture import WeChatWindow
-from wxassist.config import Config, FillerConfig
+from wxassist.config import Config
 from wxassist.filler import FillError, copy_to_clipboard, input_box_point
-from wxassist.pipeline import Pipeline, _signature, _similar
+from wxassist.layout import compute_region
+from wxassist.pipeline import _signature, _similar
 
 
 class FakeWindow:
@@ -27,19 +27,31 @@ def test_input_box_point_center_of_chat_pane() -> None:
     assert y == 200 + int(600 * 0.93)
 
 
-def test_ocr_region_excludes_sidebar_and_input() -> None:
+def test_region_uses_pixels_scaled_by_dpi() -> None:
     cfg = Config.load(None)
-    cfg.capture.chat_left_ratio = 0.25
-    cfg.capture.input_top_ratio = 0.9
-    pipeline = Pipeline(
-        cfg=cfg,
-        store=None,  # type: ignore[arg-type]
-        engine=None,  # type: ignore[arg-type]
-        on_analysis=lambda *_: None,
-        on_status=lambda *_: None,
-    )
-    region = pipeline._ocr_region(np.zeros((100, 400, 3), dtype=np.uint8))
-    assert region == (100, 0, 400, 90)
+    region = compute_region(841, 716, 1.0, cfg.capture)
+    assert region.chat_left == 300
+    assert region.header_bottom == 64
+    assert region.input_top == 716 - 160
+    scaled = compute_region(1051, 895, 1.25, cfg.capture)
+    assert scaled.chat_left == 375
+    assert scaled.header_bottom == 80
+    assert scaled.input_top == 895 - 200
+
+
+def test_region_falls_back_to_ratios_without_dpi() -> None:
+    cfg = Config.load(None)
+    region = compute_region(1000, 700, 0.0, cfg.capture)
+    assert region.chat_left == 260
+    assert region.header_bottom == 70
+    assert region.input_top == 700 - int(700 * 0.14)
+
+
+def test_region_clamped_for_tiny_windows() -> None:
+    cfg = Config.load(None)
+    region = compute_region(300, 200, 1.0, cfg.capture)
+    assert region.valid
+    assert region.chat_left >= int(300 * 0.12)
 
 
 def test_signature_and_similarity() -> None:

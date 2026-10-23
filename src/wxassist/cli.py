@@ -80,9 +80,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
-    from .capture import enable_dpi_awareness, find_window, grab_client
+    from .capture import enable_dpi_awareness, find_window, grab_window
     from .debugdraw import annotate, save
-    from .layout import BubbleParser
+    from .layout import BubbleParser, compute_region
     from .ocr import OcrEngine
 
     enable_dpi_awareness()
@@ -92,9 +92,16 @@ def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
         print(f"[x] 找不到微信窗口：{exc}")
         return 2
 
-    print(f"[1/4] 窗口：{window.title} ({window.exe}) 客户区 {window.client_size()}")
-    image = grab_client(window)
-    print(f"[2/4] 截屏：{image.shape[1]}x{image.shape[0]}")
+    print(
+        f"[1/4] 窗口：{window.title} ({window.exe or '未知进程'}) "
+        f"客户区 {window.client_size()} DPI×{window.dpi_scale():.2f}"
+    )
+    try:
+        image, mode = grab_window(window)
+    except Exception as exc:
+        print(f"[x] 截屏失败：{exc}")
+        return 2
+    print(f"[2/4] 截屏：{image.shape[1]}x{image.shape[0]}（{mode}）")
 
     engine = OcrEngine()
     if not engine.warmup():
@@ -102,14 +109,16 @@ def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
         return 3
 
     height, width = image.shape[:2]
-    left = int(width * cfg.capture.chat_left_ratio)
-    bottom = int(height * cfg.capture.input_top_ratio)
+    region = compute_region(width, height, window.dpi_scale(), cfg.capture)
     started = time.perf_counter()
-    lines = engine.recognize(image, bbox=(left, 0, width, bottom))
+    lines = engine.recognize(image, bbox=(region.chat_left, 0, width, region.input_top))
     ocr_ms = (time.perf_counter() - started) * 1000
-    print(f"[3/4] OCR：{len(lines)} 行，耗时 {ocr_ms:.0f}ms")
+    print(
+        f"[3/4] OCR：{len(lines)} 行，耗时 {ocr_ms:.0f}ms，"
+        f"面板 x≥{region.chat_left} y∈[{region.header_bottom},{region.input_top}]"
+    )
 
-    result = BubbleParser(cfg.capture).parse(lines, image)
+    result = BubbleParser(cfg.capture).parse(lines, image, region)
     print(f"[4/4] 解析：会话={result.session!r}，气泡={len(result.bubbles)}")
     for bubble in result.bubbles[-10:]:
         who = "我" if bubble.is_me else "对方"
@@ -121,11 +130,11 @@ def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
             print(f"      ({line.x0},{line.y0})-({line.x1},{line.y1}) {line.text!r}")
 
     if snapshot:
-        save(snapshot, annotate(image, result.bubbles, header=bottom))
+        save(snapshot, annotate(image, result.bubbles, header=region.input_top))
         print(f"[ok] 标注图已保存：{snapshot}")
 
     if not result.bubbles:
-        print("[!] 没有解析出气泡：确认微信停在聊天页、窗口未被遮挡，并检查 chat_left_ratio")
+        print("[!] 没有解析出气泡：确认微信停在聊天页、窗口未被遮挡")
         return 1
     return 0
 

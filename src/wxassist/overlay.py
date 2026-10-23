@@ -226,8 +226,12 @@ class Overlay(QWidget):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("background: transparent;")
+        self.scroll.viewport().setStyleSheet("background: transparent;")
         self.scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.candidates_host = QWidget()
+        self.candidates_host.setStyleSheet("background: transparent;")
         self.candidates_layout = QVBoxLayout(self.candidates_host)
         self.candidates_layout.setContentsMargins(0, 0, 0, 0)
         self.candidates_layout.setSpacing(8)

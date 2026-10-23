@@ -35,6 +35,42 @@ SYSTEM_HINTS = (
 )
 
 
+@dataclass(frozen=True)
+class ChatRegion:
+    """聊天面板在截图中的像素范围。"""
+
+    chat_left: int
+    header_bottom: int
+    input_top: int
+
+    @property
+    def valid(self) -> bool:
+        return self.chat_left > 0 and self.input_top > self.header_bottom
+
+
+def compute_region(
+    width: int, height: int, dpi_scale: float, cfg: CaptureConfig
+) -> ChatRegion:
+    """按「固定像素 × DPI 缩放」计算聊天面板；DPI 未知时退回比例。"""
+    if dpi_scale and dpi_scale > 0:
+        chat_left = int(cfg.chat_left_px * dpi_scale)
+        header = int(cfg.header_px * dpi_scale)
+        input_height = int(cfg.input_px * dpi_scale)
+    else:
+        chat_left = int(width * cfg.chat_left_ratio)
+        header = int(height * cfg.header_bottom_ratio)
+        input_height = int(height * (1.0 - cfg.input_top_ratio))
+    chat_left = _clamp(chat_left, int(width * 0.12), int(width * 0.60))
+    header = _clamp(header, int(height * 0.04), int(height * 0.16))
+    input_height = _clamp(input_height, int(height * 0.08), int(height * 0.35))
+    input_top = max(header + 10, height - input_height)
+    return ChatRegion(chat_left=chat_left, header_bottom=header, input_top=input_top)
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
+
+
 @dataclass
 class BubbleBox:
     x0: int
@@ -70,13 +106,16 @@ class BubbleParser:
 
     # ---------- 对外入口 ----------
 
-    def parse(self, lines: list[OcrLine], image: np.ndarray) -> ParseResult:
+    def parse(
+        self, lines: list[OcrLine], image: np.ndarray, region: ChatRegion | None = None
+    ) -> ParseResult:
         height, width = image.shape[:2]
-        chat_left = int(width * self.cfg.chat_left_ratio)
-        header_bottom = int(height * self.cfg.header_bottom_ratio)
-        input_top = int(height * self.cfg.input_top_ratio)
-        if input_top <= header_bottom:
+        region = region or compute_region(width, height, 0.0, self.cfg)
+        if not region.valid:
             return ParseResult(session="", bubbles=[])
+        chat_left = region.chat_left
+        header_bottom = region.header_bottom
+        input_top = region.input_top
 
         session = self._extract_session(lines, chat_left, header_bottom, width)
         body = [

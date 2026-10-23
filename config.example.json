@@ -9,8 +9,11 @@
   },
   "capture": {
     "interval_ms": 700,
+    "chat_left_px": 300,
+    "header_px": 64,
+    "input_px": 160,
     "chat_left_ratio": 0.26,
-    "header_bottom_ratio": 0.10,
+    "header_bottom_ratio": 0.1,
     "input_top_ratio": 0.86,
     "me_x_ratio": 0.62,
     "min_line_gap_px": 10

@@ -31,6 +31,11 @@ class LLMConfig:
 @dataclass
 class CaptureConfig:
     interval_ms: int = 700
+    # 微信 4.x 布局是固定像素（会随系统 DPI 缩放），优先用 px 计算
+    chat_left_px: int = 300  # 图标栏 + 会话列表宽度
+    header_px: int = 64  # 聊天面板顶部标题栏高度
+    input_px: int = 160  # 底部输入区高度
+    # DPI 未知时的兜底比例
     chat_left_ratio: float = 0.26
     header_bottom_ratio: float = 0.10
     input_top_ratio: float = 0.86

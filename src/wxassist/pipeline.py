@@ -1,6 +1,7 @@
 """采集主循环：截屏 → OCR → 解析 → 去重 → 触发建议。
 
 跑在独立线程里；通过回调把结果交给 UI，线程内不碰 Qt。
+采集优先使用 WGC（窗口被遮挡也能读，且只在画面变化时出帧）。
 """
 
 from __future__ import annotations
@@ -10,14 +11,24 @@ import time
 
 import numpy as np
 
-from .capture import CaptureError, WeChatWindow, find_window, grab_client, is_foreground
+from .capture import (
+    CaptureError,
+    WeChatWindow,
+    create_capturer,
+    find_window,
+    grab_client,
+    is_foreground,
+    is_minimized,
+)
 from .config import Config
 from .engine import SuggestEngine
-from .layout import BubbleParser
-from .models import Analysis, Frame, Message
+from .layout import BubbleParser, ChatRegion, compute_region
+from .models import Analysis, Message
 from .ocr import OcrEngine, OcrError
 from .store import Store
 from .tracker import SessionTracker
+
+SIGNATURE_THRESHOLD = 2.0
 
 
 class Pipeline:
@@ -46,7 +57,13 @@ class Pipeline:
         self._thread: threading.Thread | None = None
         self._last_window: WeChatWindow | None = None
         self._last_error = ""
+        self._last_status: tuple[str, str] = ("", "")
         self._session = ""
+
+        self._capturer = None
+        self._capture_mode = ""
+        self._capture_hwnd: int | None = None
+        self._last_seq = -1
 
     # ---------- 控制 ----------
 
@@ -61,6 +78,7 @@ class Pipeline:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+        self._close_capturer()
 
     def pause(self, paused: bool) -> None:
         if paused:
@@ -70,6 +88,7 @@ class Pipeline:
             self._paused.clear()
             self._status("ok", "监听中")
             self._last_signature = None
+            self._last_seq = -1
 
     @property
     def paused(self) -> bool:
@@ -101,48 +120,55 @@ class Pipeline:
                 self._tick()
             except CaptureError as exc:
                 self._status("wait", str(exc))
+                self._close_capturer()
+                time.sleep(0.5)
             except OcrError as exc:
                 self._status("error", str(exc))
             except Exception as exc:  # pragma: no cover - 保护线程
                 self._status("error", f"采集异常：{exc}")
+                time.sleep(0.3)
             elapsed = time.perf_counter() - started
             time.sleep(max(0.05, interval - elapsed))
 
     def _tick(self) -> None:
         win = find_window()
         self._last_window = win
-        image = grab_client(win)
-        signature = _signature(image)
-        if self._last_signature is not None and _similar(self._last_signature, signature):
-            if self._tracker is None:
-                self._status("ok", "监听中（画面无变化）")
-            return
-        self._last_signature = signature
+        if is_minimized(win):
+            raise CaptureError("微信窗口已最小化，请先还原窗口")
 
-        frame = Frame(image=image, rect=win.client_bbox())
-        lines = self._ocr.recognize(frame.image, bbox=self._ocr_region(image))
-        result = self._parser.parse(lines, image)
+        frame = self._frame(win)
+        if frame is None:
+            self._status("ok", f"监听中 · {self._session or '等待画面'}")
+            return
+        image, mode = frame
+        height, width = image.shape[:2]
+        region = compute_region(width, height, win.dpi_scale(), self.cfg.capture)
+
+        lines = self._ocr.recognize(
+            image, bbox=(region.chat_left, 0, width, region.input_top)
+        )
+        result = self._parser.parse(lines, image, region)
         session = result.session or "当前会话"
         self._session = session
+        self._capture_mode = mode
 
         if self._tracker is None:
             self._tracker = SessionTracker(session)
             new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
-            # 首帧只建立基线，不产生建议
-            self._persist(new_messages)
-            self._status("ok", f"监听中 · {session}")
-            self.on_debug(session, result, lines, frame)
+            self._persist(new_messages)  # 首帧只建立基线
+            self._status("ok", f"监听中 · {session}（{_mode_text(mode)}）")
+            self.on_debug(session, result, lines, "")
             return
 
         if session != self._tracker.session:
             self._tracker.switch_session(session, result.bubbles)
             self._status("ok", f"已切换会话 · {session}")
-            self.on_debug(session, result, lines, frame)
+            self.on_debug(session, result, lines, "")
             return
 
         new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
         self._persist(new_messages)
-        self.on_debug(session, result, lines, frame)
+        self.on_debug(session, result, lines, "")
         if not new_messages:
             self._status("ok", f"监听中 · {session}")
             return
@@ -155,6 +181,60 @@ class Pipeline:
         self._status("thinking", f"正在分析 · {session}")
         self._emit_analysis(session, history, incoming)
 
+    # ---------- 采集 ----------
+
+    def _frame(self, win: WeChatWindow) -> tuple[np.ndarray, str] | None:
+        if self._capturer is None or self._capture_hwnd != win.hwnd:
+            self._close_capturer()
+            capturer, mode = create_capturer(win)
+            self._capturer = capturer
+            self._capture_mode = mode
+            self._capture_hwnd = win.hwnd
+            self._last_seq = -1
+            self._last_signature = None
+
+        if self._capture_mode == "wgc" and self._capturer is not None:
+            got = self._capturer.grab()
+            if got is None:
+                return None
+            image, seq = got
+            if seq == self._last_seq:
+                return None
+            self._last_seq = seq
+            signature = _signature(image)
+            if self._last_signature is not None and _similar(
+                self._last_signature, signature, SIGNATURE_THRESHOLD
+            ):
+                return None
+            self._last_signature = signature
+            return image, "wgc"
+
+        # GDI 兜底：只能读屏幕可见像素，因此要求微信在前台
+        if not is_foreground(win.hwnd):
+            raise CaptureError(
+                "微信窗口被遮挡：请把微信切到前台，或安装 windows-capture 以支持后台采集"
+            )
+        image = grab_client(win)
+        signature = _signature(image)
+        if self._last_signature is not None and _similar(
+            self._last_signature, signature, SIGNATURE_THRESHOLD
+        ):
+            return None
+        self._last_signature = signature
+        return image, "gdi"
+
+    def _close_capturer(self) -> None:
+        capturer, self._capturer = self._capturer, None
+        if capturer is not None:
+            try:
+                capturer.stop()
+            except Exception:
+                pass
+        self._capture_hwnd = None
+        self._last_seq = -1
+
+    # ---------- 工具 ----------
+
     def _emit_analysis(self, session: str, history: list[Message], incoming: list[Message]) -> None:
         analysis: Analysis = self.engine.analyze(session, history, incoming)
         if analysis.ok:
@@ -163,8 +243,6 @@ class Pipeline:
             self._status("error", analysis.error)
         self.on_analysis(analysis)
 
-    # ---------- 工具 ----------
-
     def _persist(self, messages: list[Message]) -> None:
         for message in messages:
             try:
@@ -172,16 +250,16 @@ class Pipeline:
             except Exception:
                 pass
 
-    def _ocr_region(self, image: np.ndarray) -> tuple[int, int, int, int]:
-        height, width = image.shape[:2]
-        left = int(width * self.cfg.capture.chat_left_ratio)
-        bottom = int(height * self.cfg.capture.input_top_ratio)
-        return left, 0, width, max(bottom, 1)
-
     def _status(self, state: str, message: str) -> None:
-        if message != self._last_error or state == "error":
-            self._last_error = message
+        if (state, message) == self._last_status:
+            return
+        self._last_status = (state, message)
+        self._last_error = message
         self.on_status(state, message)
+
+
+def _mode_text(mode: str) -> str:
+    return "WGC 后台采集" if mode == "wgc" else "屏幕采集"
 
 
 def _signature(image: np.ndarray) -> np.ndarray:
@@ -191,7 +269,7 @@ def _signature(image: np.ndarray) -> np.ndarray:
     return gray.astype(np.float32)
 
 
-def _similar(a: np.ndarray, b: np.ndarray, threshold: float = 1.5) -> bool:
+def _similar(a: np.ndarray, b: np.ndarray, threshold: float = SIGNATURE_THRESHOLD) -> bool:
     if a.shape != b.shape:
         return False
     return float(np.abs(a - b).mean()) < threshold
