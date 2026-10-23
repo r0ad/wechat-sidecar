@@ -56,6 +56,15 @@ class PrivacyConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = True
+    top_k: int = 5
+    budget_chars: int = 1500
+    max_entry_chars: int = 600
+    pinned_always: bool = True
+
+
+@dataclass
 class UIConfig:
     hotkey: str = "ctrl+alt+j"
     always_on_top: bool = True
@@ -75,6 +84,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     filler: FillerConfig = field(default_factory=FillerConfig)
     data_dir: str = ""
@@ -105,7 +115,7 @@ class Config:
         self.merge_dict(raw)
 
     def merge_dict(self, raw: dict[str, Any]) -> None:
-        for section in ("llm", "capture", "privacy", "ui", "filler"):
+        for section in ("llm", "capture", "privacy", "ui", "filler", "memory"):
             values = raw.get(section)
             if not isinstance(values, dict):
                 continue

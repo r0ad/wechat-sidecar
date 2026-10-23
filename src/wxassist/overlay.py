@@ -238,6 +238,7 @@ class Overlay(QWidget):
     load_more_requested = Signal()
     pin_toggled = Signal(bool)
     moved_by_user = Signal()
+    memory_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -368,10 +369,14 @@ class Overlay(QWidget):
         self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
         self.summary_btn = QPushButton("总结会话")
         self.summary_btn.clicked.connect(self.summary_requested.emit)
+        self.memory_btn = QPushButton("长期记忆")
+        self.memory_btn.setToolTip("管理业务问答/长期记忆（也可在设置里）")
+        self.memory_btn.clicked.connect(self.memory_requested.emit)
         self.style_btn = QPushButton("学我说话")
         self.style_btn.setToolTip("用我的历史回复生成说话风格画像，让候选更像本人")
         self.style_btn.clicked.connect(self.learn_style_requested.emit)
         row1.addWidget(self.regenerate_btn)
+        row1.addWidget(self.memory_btn)
         row1.addWidget(self.summary_btn)
         row1.addWidget(self.style_btn)
         row1.addStretch(1)
@@ -482,8 +487,9 @@ class Overlay(QWidget):
         tokens = analysis.tokens_in + analysis.tokens_out
         token_text = f" · {tokens} tok" if tokens else ""
         context_text = f" · {analysis.context_count} 条上下文" if analysis.context_count else ""
+        memory_text = f" · 记忆 {analysis.memory_count}" if analysis.memory_count else ""
         self.status_label.setText(
-            f"生成完成 · {analysis.latency_ms}ms · {source}{context_text}{token_text}"
+            f"生成完成 · {analysis.latency_ms}ms · {source}{context_text}{memory_text}{token_text}"
         )
 
     def show_debug(self, session: str, bubbles, lines, extra: str = "") -> None:

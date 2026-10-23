@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -42,6 +43,13 @@ QLineEdit, QComboBox {{
     padding: 6px 8px; font-size: 12px;
 }}
 QComboBox QAbstractItemView {{ background: #202632; color: {FG}; selection-background-color: #2C3442; }}
+QTabWidget::pane {{ border: none; }}
+QTabBar::tab {{
+    background: transparent; color: {MUTED};
+    padding: 6px 16px; margin-right: 4px; border-radius: 7px; font-size: 12px;
+}}
+QTabBar::tab:hover {{ color: {FG}; background: rgba(255,255,255,12); }}
+QTabBar::tab:selected {{ color: #FFFFFF; background: rgba(255,255,255,16); }}
 QPushButton {{
     background: rgba(255,255,255,16); color: {FG};
     border: 1px solid rgba(255,255,255,24); border-radius: 8px;
@@ -65,15 +73,20 @@ class SettingsDialog(QDialog):
         llm: LLMClient,
         data_dir: str,
         parent: QWidget | None = None,
+        store=None,
+        session_getter=None,
     ) -> None:
         super().__init__(parent)
         self.cfg = cfg
         self.llm = llm
         self.data_dir = data_dir
+        self.store = store
+        self.session_getter = session_getter or (lambda: "")
         self.setWindowTitle("模型设置")
         self.setWindowIcon(app_icon())
         self.setStyleSheet(STYLE)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(640)
+        self.resize(680, 600)
         self._testing = False
         self._build()
         self._prefill()
@@ -87,9 +100,15 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(12)
 
-        title = QLabel("模型设置")
+        title = QLabel("设置")
         title.setObjectName("title")
         layout.addWidget(title)
+
+        self.tabs = QTabWidget()
+        model_tab = QWidget()
+        model_layout = QVBoxLayout(model_tab)
+        model_layout.setContentsMargins(0, 8, 0, 0)
+        model_layout.setSpacing(12)
 
         form = QFormLayout()
         form.setSpacing(10)
@@ -121,17 +140,17 @@ class SettingsDialog(QDialog):
         self.key_edit.setPlaceholderText("sk-...")
         form.addRow("API Key", self.key_edit)
 
-        layout.addLayout(form)
+        model_layout.addLayout(form)
 
         self.env_hint = QLabel("")
         self.env_hint.setObjectName("hint")
         self.env_hint.setWordWrap(True)
-        layout.addWidget(self.env_hint)
+        model_layout.addWidget(self.env_hint)
 
         self.note_label = QLabel("")
         self.note_label.setObjectName("hint")
         self.note_label.setWordWrap(True)
-        layout.addWidget(self.note_label)
+        model_layout.addWidget(self.note_label)
 
         test_row = QHBoxLayout()
         self.test_btn = QPushButton("测试连接")
@@ -140,7 +159,17 @@ class SettingsDialog(QDialog):
         self.test_result.setWordWrap(True)
         test_row.addWidget(self.test_btn)
         test_row.addWidget(self.test_result, 1)
-        layout.addLayout(test_row)
+        model_layout.addLayout(test_row)
+        model_layout.addStretch(1)
+
+        self.tabs.addTab(model_tab, "模型")
+        self.memory_widget = None
+        if self.store is not None:
+            from .memory_widget import MemoryWidget
+
+            self.memory_widget = MemoryWidget(self.store, self.session_getter)
+            self.tabs.addTab(self.memory_widget, "长期记忆")
+        layout.addWidget(self.tabs, 1)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -195,6 +224,10 @@ class SettingsDialog(QDialog):
         self.note_label.setText(
             "Key 只保存在本机（Windows DPAPI 加密，当前用户可解密），不会写入仓库或日志。"
         )
+
+    def show_memory_tab(self) -> None:
+        if self.memory_widget is not None:
+            self.tabs.setCurrentIndex(1)
 
     # ---------- 事件 ----------
 

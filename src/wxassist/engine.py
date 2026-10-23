@@ -10,6 +10,7 @@ import time
 from .config import Config
 from .json_utils import extract_json
 from .llm import LLMClient, LLMError
+from .memory import format_block, retrieve
 from .models import Analysis, Candidate, Message, SessionSummary
 from .privacy import redact_messages, sensitive_topics
 from .prompts import (
@@ -71,6 +72,16 @@ class SuggestEngine:
         pending = unanswered_messages(context) or list(incoming)
         analysis.incoming = pending
         history_text = format_history(context)
+
+        memory_text = ""
+        if self.store is not None and self.cfg.memory.enabled:
+            query = " ".join(message.text for message in pending) + " " + " ".join(
+                message.text for message in context[-8:]
+            )
+            entries = retrieve(self.store.list_memories(session), query, self.cfg.memory)
+            if entries:
+                memory_text = format_block(entries, self.cfg.memory.max_entry_chars)
+                analysis.memory_count = len(entries)
         relationship = session
         style_profile = self.store.get_style_profile(session) if self.store else ""
 
@@ -92,6 +103,7 @@ class SuggestEngine:
             style_profile=style_profile,
             avoid=avoid,
             unanswered=[message.text for message in pending],
+            memory_text=memory_text,
         )
         try:
             draft, tokens = self._chat_json(DRAFT_SYSTEM, draft_user, max_tokens=800)

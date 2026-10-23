@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from .models import Analysis, Message
+from .models import Analysis, MemoryEntry, Message
 
 
 SCHEMA = """
@@ -33,6 +33,22 @@ CREATE TABLE IF NOT EXISTS suggestions (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL DEFAULT 'global',
+    session TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'fact',
+    title TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    keywords TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    weight REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS style_profiles (
     session TEXT PRIMARY KEY,
     profile TEXT NOT NULL,
@@ -43,7 +59,26 @@ CREATE TABLE IF NOT EXISTS style_profiles (
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session, seq);
 CREATE INDEX IF NOT EXISTS idx_messages_session_ts ON messages(session, ts);
+CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, session, enabled);
 """
+
+
+def _memory_from_row(row) -> MemoryEntry:
+    return MemoryEntry(
+        id=int(row["id"]),
+        scope=row["scope"],
+        session=row["session"],
+        kind=row["kind"],
+        title=row["title"],
+        content=row["content"],
+        keywords=row["keywords"],
+        enabled=bool(row["enabled"]),
+        pinned=bool(row["pinned"]),
+        weight=float(row["weight"]),
+        source=row["source"],
+        created_at=float(row["created_at"]),
+        updated_at=float(row["updated_at"]),
+    )
 
 
 class Store:
@@ -209,6 +244,117 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # ---------- 长期记忆 / 业务知识 ----------
+
+    def add_memory(
+        self,
+        *,
+        content: str,
+        scope: str = "global",
+        session: str = "",
+        kind: str = "fact",
+        title: str = "",
+        keywords: str = "",
+        pinned: bool = False,
+        enabled: bool = True,
+        source: str = "manual",
+        weight: float = 1.0,
+    ) -> int:
+        now = time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO memories(scope, session, kind, title, content, keywords,"
+                " enabled, pinned, weight, source, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scope,
+                    session,
+                    kind,
+                    title,
+                    content,
+                    keywords,
+                    int(enabled),
+                    int(pinned),
+                    weight,
+                    source,
+                    now,
+                    now,
+                ),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def update_memory(self, memory_id: int, **fields) -> None:
+        allowed = {
+            "scope",
+            "session",
+            "kind",
+            "title",
+            "content",
+            "keywords",
+            "enabled",
+            "pinned",
+            "weight",
+            "source",
+        }
+        updates = {key: value for key, value in fields.items() if key in allowed}
+        if not updates:
+            return
+        if "enabled" in updates:
+            updates["enabled"] = int(bool(updates["enabled"]))
+        if "pinned" in updates:
+            updates["pinned"] = int(bool(updates["pinned"]))
+        updates["updated_at"] = time.time()
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [memory_id]
+        with self._lock:
+            self._conn.execute(f"UPDATE memories SET {assignments} WHERE id = ?", values)
+            self._conn.commit()
+
+    def delete_memory(self, memory_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            self._conn.commit()
+
+    def set_memory_enabled(self, memory_id: int, enabled: bool) -> None:
+        self.update_memory(memory_id, enabled=enabled)
+
+    def set_memory_pinned(self, memory_id: int, pinned: bool) -> None:
+        self.update_memory(memory_id, pinned=pinned)
+
+    def list_memories(
+        self, session: str = "", include_disabled: bool = True
+    ) -> list[MemoryEntry]:
+        """全局记忆 + 当前会话的记忆。"""
+        clauses = ["(scope = 'global' OR (scope = 'session' AND session = ?))"]
+        params: list = [session]
+        if not include_disabled:
+            clauses.append("enabled = 1")
+        query = (
+            "SELECT id, scope, session, kind, title, content, keywords, enabled, pinned,"
+            " weight, source, created_at, updated_at FROM memories WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY pinned DESC, updated_at DESC"
+        )
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [_memory_from_row(row) for row in rows]
+
+    def list_all_memories(self, include_disabled: bool = True) -> list[MemoryEntry]:
+        query = (
+            "SELECT id, scope, session, kind, title, content, keywords, enabled, pinned,"
+            " weight, source, created_at, updated_at FROM memories"
+        )
+        if not include_disabled:
+            query += " WHERE enabled = 1"
+        query += " ORDER BY scope, updated_at DESC"
+        with self._lock:
+            rows = self._conn.execute(query).fetchall()
+        return [_memory_from_row(row) for row in rows]
+
+    def count_memories(self, session: str = "", include_disabled: bool = False) -> int:
+        return len(self.list_memories(session, include_disabled=include_disabled))
 
     # ---------- 风格画像 ----------
 

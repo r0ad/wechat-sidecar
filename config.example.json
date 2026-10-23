@@ -23,6 +23,13 @@
     "load_more_pages": 3,
     "require_send_button": true
   },
+  "memory": {
+    "enabled": true,
+    "top_k": 5,
+    "budget_chars": 1500,
+    "max_entry_chars": 600,
+    "pinned_always": true
+  },
   "privacy": {
     "redact_before_send": true,
     "max_context_messages": 20,

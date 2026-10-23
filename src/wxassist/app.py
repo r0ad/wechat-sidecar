@@ -164,6 +164,7 @@ class AppController:
         self.overlay.refine_requested.connect(self._on_refine)
         self.overlay.context_requested.connect(self._on_context)
         self.overlay.load_more_requested.connect(self._on_load_more)
+        self.overlay.memory_requested.connect(self._open_memory_settings)
         self.overlay.pin_toggled.connect(self._on_pin_toggled)
         self.overlay.moved_by_user.connect(self._on_overlay_moved)
         self.overlay.hidden_by_user.connect(self._on_hidden_by_user)
@@ -231,6 +232,8 @@ class AppController:
         self._tray_follow.setCheckable(True)
         self._tray_follow.setChecked(bool(self.cfg.ui.follow_wechat))
         self._tray_follow.toggled.connect(self._on_follow_toggled)
+        memory_action = QAction("长期记忆…", menu)
+        memory_action.triggered.connect(self._open_memory_settings)
         settings = QAction("模型设置…", menu)
         settings.triggered.connect(self._open_settings)
         quit_action = QAction("退出", menu)
@@ -239,6 +242,7 @@ class AppController:
         menu.addAction(self._tray_pause)
         menu.addAction(self._tray_follow)
         menu.addSeparator()
+        menu.addAction(memory_action)
         menu.addAction(settings)
         menu.addSeparator()
         menu.addAction(quit_action)
@@ -530,10 +534,21 @@ class AppController:
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
             self._settings_dialog.raise_()
             return
-        dialog = SettingsDialog(self.cfg, self.llm, self.cfg.data_dir)
+        dialog = SettingsDialog(
+            self.cfg,
+            self.llm,
+            self.cfg.data_dir,
+            store=self.store,
+            session_getter=self._session,
+        )
         dialog.saved.connect(self._apply_settings)
         self._settings_dialog = dialog
         _force_show(dialog)
+
+    def _open_memory_settings(self) -> None:
+        self._open_settings()
+        if self._settings_dialog is not None:
+            self._settings_dialog.show_memory_tab()
 
     def _apply_settings(self, data: dict) -> None:
         provider = data.get("provider") or "custom"
