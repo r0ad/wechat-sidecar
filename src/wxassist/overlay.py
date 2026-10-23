@@ -163,6 +163,8 @@ class Overlay(QWidget):
     summary_requested = Signal()
     learn_style_requested = Signal()
     refine_requested = Signal(str, str)
+    context_requested = Signal()
+    load_more_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -298,6 +300,12 @@ class Overlay(QWidget):
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
+        self.load_more_btn = QPushButton("读取更多")
+        self.load_more_btn.setToolTip("向上翻阅微信聊天记录，把更早的消息读进上下文")
+        self.load_more_btn.clicked.connect(self.load_more_requested.emit)
+        self.context_btn = QPushButton("上下文 0")
+        self.context_btn.setToolTip("查看当前会话已读取的上下文消息")
+        self.context_btn.clicked.connect(self._toggle_context)
         self.pause_btn = QPushButton("暂停采集")
         self.pause_btn.clicked.connect(self._toggle_pause)
         debug_btn = QPushButton("调试")
@@ -306,6 +314,8 @@ class Overlay(QWidget):
         quit_btn = QPushButton("退出")
         quit_btn.setObjectName("ghost")
         quit_btn.clicked.connect(self.quit_requested.emit)
+        row2.addWidget(self.load_more_btn)
+        row2.addWidget(self.context_btn)
         row2.addWidget(self.pause_btn)
         row2.addStretch(1)
         row2.addWidget(debug_btn)
@@ -316,6 +326,12 @@ class Overlay(QWidget):
         self.hint_label.setObjectName("hint")
         self.hint_label.setWordWrap(True)
         layout.addWidget(self.hint_label)
+
+        self.context_panel = QPlainTextEdit()
+        self.context_panel.setReadOnly(True)
+        self.context_panel.setFixedHeight(150)
+        self.context_panel.hide()
+        layout.addWidget(self.context_panel)
 
         self.debug_panel = QPlainTextEdit()
         self.debug_panel.setReadOnly(True)
@@ -370,7 +386,10 @@ class Overlay(QWidget):
         source = analysis.provider or "model"
         tokens = analysis.tokens_in + analysis.tokens_out
         token_text = f" · {tokens} tok" if tokens else ""
-        self.status_label.setText(f"生成完成 · {analysis.latency_ms}ms · {source}{token_text}")
+        context_text = f" · {analysis.context_count} 条上下文" if analysis.context_count else ""
+        self.status_label.setText(
+            f"生成完成 · {analysis.latency_ms}ms · {source}{context_text}{token_text}"
+        )
 
     def show_debug(self, session: str, bubbles, lines, extra: str = "") -> None:
         if not self.debug_panel.isVisible():
@@ -406,6 +425,27 @@ class Overlay(QWidget):
         self.empty_label.show()
         self.scroll.hide()
         self.status_label.setText("未配置模型 · 点 ⚙ 设置")
+
+    def set_context_count(self, total: int) -> None:
+        self.context_btn.setText(f"上下文 {total}")
+
+    def show_context(self, messages, total: int) -> None:
+        lines = []
+        for message in messages[-30:]:
+            who = "我" if message.is_me else "对方"
+            lines.append(f"{who}：{message.text}")
+        body = "\n".join(lines) if lines else "还没有读到上下文消息。打开微信聊天窗口停留几秒即可。"
+        self.context_panel.setPlainText(body)
+        self.set_context_count(total)
+        if not self.context_panel.isVisible():
+            self.context_panel.show()
+
+    def _toggle_context(self) -> None:
+        if self.context_panel.isVisible():
+            self.context_panel.hide()
+        else:
+            self.context_panel.show()
+            self.context_requested.emit()
 
     def set_busy(self, message: str) -> None:
         self.status_label.setText(message)

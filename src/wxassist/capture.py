@@ -159,6 +159,34 @@ def is_foreground(hwnd: int) -> bool:
     return fg in (hwnd, root)
 
 
+def is_covered(win: WeChatWindow) -> bool:
+    """窗口是否被其他窗口遮挡（GDI 截屏前必须检查，否则会读到别人的画面）。"""
+    if win32gui is None:
+        return False
+    try:
+        left, top, right, bottom = win.client_bbox()
+    except Exception:
+        return True
+    width, height = right - left, bottom - top
+    if width < 80 or height < 80:
+        return True
+    points = [
+        (left + width // 2, top + height // 2),
+        (left + width // 4, top + height // 4),
+        (left + 3 * width // 4, top + height // 4),
+        (left + width // 4, top + 3 * height // 4),
+        (left + 3 * width // 4, top + 3 * height // 4),
+    ]
+    for x, y in points:
+        hwnd = win32gui.WindowFromPoint((x, y))
+        if not hwnd:
+            return True
+        root = win32gui.GetAncestor(hwnd, win32con.GA_ROOT)
+        if root != win.hwnd:
+            return True
+    return False
+
+
 def is_minimized(win: WeChatWindow) -> bool:
     try:
         return bool(win32gui.IsIconic(win.hwnd))

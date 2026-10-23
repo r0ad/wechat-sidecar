@@ -144,3 +144,78 @@ def test_region_matches_synthetic_layout() -> None:
     region = compute_region(WIDTH, HEIGHT, 1.0, cfg.capture)
     assert region.chat_left == 300
     assert region.input_top == HEIGHT - 160
+
+
+def test_session_switch_persists_visible_context(monkeypatch, tmp_path) -> None:
+    pipeline, analyses = make_pipeline(monkeypatch, tmp_path)
+
+    frame = base_image()
+    old, frame = bubble(frame, "旧会话消息", 300, is_me=False)
+    pipeline._frame = lambda win: (frame, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("A"), old]  # type: ignore[method-assign]
+    pipeline._tick()
+
+    # 切换到会话 B，画面上有 3 条历史（应全部进上下文）
+    frame2 = base_image()
+    b1, frame2 = bubble(frame2, "第一句", 260, is_me=False)
+    b2, frame2 = bubble(frame2, "我的回复", 330, is_me=True)
+    b3, frame2 = bubble(frame2, "第三句", 400, is_me=False)
+    pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("B"), b1, b2, b3]  # type: ignore[method-assign]
+    pipeline._tick()
+    assert pipeline.store.count_messages("B") == 3
+
+    # B 里来一条新消息 → 分析应带上刚才 3 条历史
+    frame3 = base_image()
+    c1, frame3 = bubble(frame3, "第一句", 240, is_me=False)
+    c2, frame3 = bubble(frame3, "我的回复", 310, is_me=True)
+    c3, frame3 = bubble(frame3, "第三句", 380, is_me=False)
+    c4, frame3 = bubble(frame3, "新问题", 450, is_me=False)
+    pipeline._frame = lambda win: (frame3, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("B"), c1, c2, c3, c4]  # type: ignore[method-assign]
+    pipeline._tick()
+    pipeline._flush_pending()
+
+    assert len(analyses) == 1
+    assert analyses[0].context_count >= 4
+    assert analyses[0].incoming[-1].text == "新问题"
+
+
+def test_session_name_ocr_jitter_keeps_same_session(monkeypatch, tmp_path) -> None:
+    pipeline, analyses = make_pipeline(monkeypatch, tmp_path)
+
+    frame = base_image()
+    m1, frame = bubble(frame, "在吗", 300, is_me=False)
+    pipeline._frame = lambda win: (frame, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("卢恒"), m1]  # type: ignore[method-assign]
+    pipeline._tick()
+
+    # 标题 OCR 抖动（多识别出一个“口”），不应被当成新会话
+    frame2 = base_image()
+    m1b, frame2 = bubble(frame2, "在吗", 300, is_me=False)
+    m2, frame2 = bubble(frame2, "在的", 380, is_me=True)
+    pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("卢恒 口"), m1b, m2]  # type: ignore[method-assign]
+    pipeline._tick()
+
+    assert pipeline._tracker is not None
+    assert pipeline._tracker.session == "卢恒"
+    assert pipeline.store.sessions() == ["卢恒"]
+
+
+def test_empty_session_header_keeps_current(monkeypatch, tmp_path) -> None:
+    pipeline, _analyses = make_pipeline(monkeypatch, tmp_path)
+    frame = base_image()
+    m1, frame = bubble(frame, "在吗", 300, is_me=False)
+    pipeline._frame = lambda win: (frame, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("Alice"), m1]  # type: ignore[method-assign]
+    pipeline._tick()
+
+    frame2 = base_image()
+    m1b, frame2 = bubble(frame2, "在吗", 300, is_me=False)
+    pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [m1b]  # type: ignore[method-assign]
+    pipeline._tick()
+
+    assert pipeline._tracker is not None
+    assert pipeline._tracker.session == "Alice"

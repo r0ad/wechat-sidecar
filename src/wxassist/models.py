@@ -96,6 +96,7 @@ class Analysis:
     latency_ms: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    context_count: int = 0
     provider: str = ""
     model: str = ""
 

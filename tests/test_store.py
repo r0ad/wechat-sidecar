@@ -45,3 +45,32 @@ def test_reopen_persists(tmp_path) -> None:
     store = Store(path)
     assert [m.text for m in store.recent_messages("Bob")] == ["hi"]
     store.close()
+
+
+def test_add_messages_dedup_and_count(tmp_path) -> None:
+    store = Store(tmp_path / "t.db")
+    message = Message(session="A", text="在吗", is_me=False, ts=1)
+    assert store.add_messages_dedup([message, message]) == 1
+    assert store.count_messages("A") == 1
+    same_again = Message(session="A", text="在吗", is_me=False, ts=9)
+    assert store.add_messages_dedup([same_again]) == 0
+    assert store.add_messages_dedup([Message(session="A", text="新的", is_me=True, ts=10)]) == 1
+    assert store.count_messages("A") == 2
+    store.close()
+
+
+def test_seq_ordering_with_older_context(tmp_path) -> None:
+    store = Store(tmp_path / "t.db")
+    store.add_message(Message(session="A", text="新1", is_me=False, ts=100))
+    store.add_message(Message(session="A", text="新2", is_me=False, ts=101))
+    added = store.add_messages_dedup(
+        [
+            Message(session="A", text="旧1", is_me=False, ts=50),
+            Message(session="A", text="旧2", is_me=False, ts=51),
+        ],
+        seq_base=90,
+    )
+    assert added == 2
+    assert [m.text for m in store.recent_messages("A", 10)] == ["旧1", "旧2", "新1", "新2"]
+    assert store.count_messages("A") == 4
+    store.close()

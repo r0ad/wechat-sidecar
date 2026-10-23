@@ -64,6 +64,7 @@ class Bridge(QObject):
     style_ready = Signal(str, str)
     refined = Signal(str, str, str)
     session_changed = Signal(str)
+    context_updated = Signal(int, str)
 
 
 def _force_show(dialog) -> None:
@@ -128,6 +129,9 @@ class AppController:
         self.overlay.summary_requested.connect(self._on_summary)
         self.overlay.learn_style_requested.connect(self._on_learn_style)
         self.overlay.refine_requested.connect(self._on_refine)
+        self.overlay.context_requested.connect(self._on_context)
+        self.overlay.load_more_requested.connect(self._on_load_more)
+        self.bridge.context_updated.connect(self._on_context_updated)
 
     # ---------- 生命周期 ----------
 
@@ -191,6 +195,46 @@ class AppController:
                 self._auto_settings_opened = True
                 QTimer.singleShot(200, self._open_settings)
         self.overlay.show_analysis(analysis)
+        self.overlay.set_context_count(self.store.count_messages(analysis.session))
+        if self.overlay.context_panel.isVisible():
+            self._on_context()
+
+    def _on_load_more(self) -> None:
+        session = self._session()
+        if not session:
+            self.overlay.set_status("wait", "还没有会话，先打开一个微信聊天")
+            return
+        if self.pipeline is None:
+            return
+        self.overlay.set_busy("正在向上翻阅聊天记录，读取更早的上下文…")
+
+        def worker() -> None:
+            try:
+                added = self.pipeline.load_more_context(session)
+            except Exception as exc:
+                self.bridge.status_changed.emit("error", f"读取更多失败：{exc}")
+                return
+            self.bridge.context_updated.emit(added, session)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_context_updated(self, added: int, session: str) -> None:
+        total = self.store.count_messages(session)
+        if added:
+            self.overlay.set_status("ok", f"已补充 {added} 条历史 · 当前上下文 {total} 条")
+        else:
+            self.overlay.set_status("ok", f"没有更多历史可读 · 当前上下文 {total} 条")
+        self.overlay.set_context_count(total)
+        if self.overlay.context_panel.isVisible():
+            self._on_context()
+
+    def _on_context(self) -> None:
+        session = self._session()
+        if not session:
+            self.overlay.show_context([], 0)
+            return
+        messages = self.store.recent_messages(session, 30)
+        self.overlay.show_context(messages, self.store.count_messages(session))
 
     def _on_status(self, state: str, message: str) -> None:
         self.overlay.set_status(state, message)

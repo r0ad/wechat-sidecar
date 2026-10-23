@@ -65,6 +65,7 @@ class SuggestEngine:
             return analysis
 
         context = history[-max(1, self.cfg.privacy.max_context_messages) :]
+        analysis.context_count = len(context)
         if self.cfg.privacy.redact_before_send:
             context = redact_messages(context)
         history_text = format_history(context)

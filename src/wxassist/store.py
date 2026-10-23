@@ -19,9 +19,9 @@ CREATE TABLE IF NOT EXISTS messages (
     is_me INTEGER NOT NULL,
     sender TEXT NOT NULL DEFAULT '',
     ts REAL NOT NULL,
-    digest TEXT NOT NULL
+    digest TEXT NOT NULL,
+    seq REAL NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_messages_session_ts ON messages(session, ts);
 
 CREATE TABLE IF NOT EXISTS suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS style_profiles (
 );
 """
 
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session, seq);
+CREATE INDEX IF NOT EXISTS idx_messages_session_ts ON messages(session, ts);
+"""
+
 
 class Store:
     def __init__(self, path: str | Path) -> None:
@@ -50,22 +55,34 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+            self._conn.executescript(INDEXES)
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """老库补 seq 列（按 ts 回填），保证上下文按真实顺序排列。"""
+        columns = [row[1] for row in self._conn.execute("PRAGMA table_info(messages)")]
+        if "seq" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN seq REAL NOT NULL DEFAULT 0")
+            self._conn.execute("UPDATE messages SET seq = ts WHERE seq = 0")
+        self._conn.commit()
 
     # ---------- 消息 ----------
 
     def add_message(self, message: Message) -> int:
         with self._lock:
+            ts = float(message.ts) if message.ts is not None else time.time()
             cur = self._conn.execute(
-                "INSERT INTO messages(session, text, is_me, sender, ts, digest)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages(session, text, is_me, sender, ts, digest, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     message.session,
                     message.text,
                     int(message.is_me),
                     message.sender,
-                    message.ts or time.time(),
+                    ts,
                     message.digest(),
+                    ts,
                 ),
             )
             self._conn.commit()
@@ -76,11 +93,67 @@ class Store:
             self.add_message(message)
         return len(messages)
 
+    def add_messages_dedup(
+        self, messages: list[Message], seq_base: float | None = None
+    ) -> int:
+        """按 (session, digest) 去重后写入。
+
+        seq_base 不为空时用于「更早的历史」：把 seq 排在现有最小 seq 之前。
+        """
+        if not messages:
+            return 0
+        session = messages[0].session
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT digest FROM messages WHERE session = ?", (session,)
+            ).fetchall()
+            existing = {row["digest"] for row in rows}
+            inserted = 0
+            step = 0.001
+            for index, message in enumerate(messages):
+                digest = message.digest()
+                if digest in existing:
+                    continue
+                existing.add(digest)
+                ts = float(message.ts) if message.ts is not None else time.time()
+                seq = ts if seq_base is None else seq_base + index * step
+                self._conn.execute(
+                    "INSERT INTO messages(session, text, is_me, sender, ts, digest, seq)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        message.session,
+                        message.text,
+                        int(message.is_me),
+                        message.sender,
+                        ts,
+                        digest,
+                        seq,
+                    ),
+                )
+                inserted += 1
+            self._conn.commit()
+        return inserted
+
+    def min_seq(self, session: str) -> float | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MIN(seq) AS s FROM messages WHERE session = ?", (session,)
+            ).fetchone()
+        value = row["s"] if row else None
+        return float(value) if value is not None else None
+
+    def count_messages(self, session: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM messages WHERE session = ?", (session,)
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
     def recent_messages(self, session: str, limit: int = 20) -> list[Message]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT session, text, is_me, sender, ts FROM messages"
-                " WHERE session = ? ORDER BY id DESC LIMIT ?",
+                " WHERE session = ? ORDER BY seq DESC, id DESC LIMIT ?",
                 (session, limit),
             ).fetchall()
         return [

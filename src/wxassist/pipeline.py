@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import difflib
 import threading
 import time
 
@@ -14,9 +15,11 @@ import numpy as np
 from .capture import (
     CaptureError,
     WeChatWindow,
+    bring_to_front,
     create_capturer,
     find_window,
     grab_client,
+    is_covered,
     is_foreground,
     is_minimized,
 )
@@ -66,10 +69,15 @@ class Pipeline:
         self._capture_mode = ""
         self._capture_hwnd: int | None = None
         self._last_seq = -1
+        self._io_lock = threading.Lock()
 
         self._baseline_ts = 0.0
         self._pending: list[Message] = []
         self._pending_at = 0.0
+        try:
+            self._known_sessions: list[str] = store.sessions()
+        except Exception:
+            self._known_sessions = []
 
     # ---------- 控制 ----------
 
@@ -138,6 +146,14 @@ class Pipeline:
             time.sleep(max(0.05, interval - elapsed))
 
     def _tick(self) -> None:
+        if not self._io_lock.acquire(blocking=False):
+            return
+        try:
+            self._tick_locked()
+        finally:
+            self._io_lock.release()
+
+    def _tick_locked(self) -> None:
         win = find_window()
         self._last_window = win
         if is_minimized(win):
@@ -155,7 +171,7 @@ class Pipeline:
             image, bbox=(region.chat_left, 0, width, region.input_top)
         )
         result = self._parser.parse(lines, image, region)
-        session = result.session or "当前会话"
+        session = self._resolve_session(result.session)
         self._session = session
         self._capture_mode = mode
 
@@ -171,9 +187,11 @@ class Pipeline:
 
         if session != self._tracker.session:
             self._tracker.switch_session(session, result.bubbles)
+            self._persist_bubbles(session, result.bubbles)  # 新会话的可见历史也要进上下文
             self._pending.clear()
             self.on_session(session)
-            self._status("ok", f"已切换会话 · {session}")
+            stored = self.store.count_messages(session)
+            self._status("ok", f"已切换会话 · {session}（已读 {stored} 条上下文）")
             self.on_debug(session, result, lines, "")
             return
 
@@ -189,6 +207,139 @@ class Pipeline:
             self._status("ok", f"监听中 · {session}（刚发出一条）")
             return
         self._enqueue_incoming(session, incoming)
+
+    def _resolve_session(self, raw: str) -> str:
+        """会话名稳定化：OCR 抖动/图标误识不能把同一个会话拆成多个。"""
+        if not raw and self._tracker is not None:
+            return self._tracker.session
+        candidates: list[str] = []
+        if self._tracker is not None:
+            candidates.append(self._tracker.session)
+        candidates.extend(self._known_sessions)
+        key = _name_key(raw)
+        for name in candidates:
+            known = _name_key(name)
+            if not known or not key:
+                continue
+            if key == known or key in known or known in key:
+                return name
+            if difflib.SequenceMatcher(None, key, known).ratio() >= 0.8:
+                return name
+        if raw and raw not in self._known_sessions:
+            self._known_sessions.append(raw)
+            if len(self._known_sessions) > 300:
+                self._known_sessions = self._known_sessions[-300:]
+        return raw or "当前会话"
+
+    def load_more_context(self, session: str, pages: int | None = None) -> int:
+        """向上翻阅聊天记录，把更早的可见消息补进本地上下文。
+
+        需要微信在前台；会临时移动鼠标滚轮，结束后滚回底部并恢复光标位置。
+        """
+        pages = pages or max(1, self.cfg.capture.load_more_pages)
+        if not self._io_lock.acquire(timeout=5):
+            raise CaptureError("采集正忙，请稍后再试")
+        try:
+            win = find_window()
+            if is_minimized(win):
+                raise CaptureError("微信窗口已最小化，请先还原")
+            if not is_foreground(win.hwnd):
+                bring_to_front(win.hwnd)
+                time.sleep(0.25)
+            if not is_foreground(win.hwnd):
+                raise CaptureError("请先把微信切到前台，再点「读取更多」")
+
+            if self._capturer is None or self._capture_hwnd != win.hwnd:
+                self._close_capturer()
+                capturer, mode = create_capturer(win)
+                self._capturer = capturer
+                self._capture_mode = mode
+                self._capture_hwnd = win.hwnd
+                self._last_seq = -1
+
+            left, top, right, bottom = win.client_bbox()
+            chat_left = int((right - left) * self.cfg.capture.chat_left_ratio)
+            cx = left + chat_left + (right - left - chat_left) // 2
+            cy = top + (bottom - top) // 2
+            try:
+                import win32api
+                import win32con
+
+                old_pos = win32api.GetCursorPos()
+                win32api.SetCursorPos((cx, cy))
+                time.sleep(0.05)
+            except Exception as exc:
+                raise CaptureError(f"无法控制鼠标滚轮：{exc}") from exc
+
+            collected: list = []
+            try:
+                for _page in range(pages):
+                    image = self._next_frame(win, timeout=1.5)
+                    if image is None:
+                        break
+                    height, width = image.shape[:2]
+                    region = compute_region(width, height, win.dpi_scale(), self.cfg.capture)
+                    lines = self._ocr.recognize(
+                        image, bbox=(region.chat_left, 0, width, region.input_top)
+                    )
+                    result = self._parser.parse(lines, image, region)
+                    collected = list(result.bubbles) + collected
+                    if self._resolve_session(result.session) != session:
+                        break
+                    self._wheel(120, 3)
+                    time.sleep(0.4)
+            finally:
+                self._wheel(-120, 80)  # 滚回底部
+                try:
+                    win32api.SetCursorPos(old_pos)
+                except Exception:
+                    pass
+
+            messages = []
+            seen: set[str] = set()
+            now = time.time()
+            for bubble in collected:
+                if bubble.digest() in seen:
+                    continue
+                seen.add(bubble.digest())
+                messages.append(
+                    Message(session=session, text=bubble.text, is_me=bubble.is_me, ts=now)
+                )
+            if not messages:
+                return 0
+            min_seq = self.store.min_seq(session)
+            base = (min_seq if min_seq is not None else time.time()) - len(messages) * 0.002
+            return self.store.add_messages_dedup(messages, seq_base=base)
+        finally:
+            self._io_lock.release()
+
+    @staticmethod
+    def _wheel(delta: int, times: int) -> None:
+        try:
+            import win32api
+            import win32con
+
+            for _ in range(times):
+                win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+                time.sleep(0.03)
+        except Exception:
+            pass
+
+    def _next_frame(self, win: WeChatWindow, timeout: float = 1.5):
+        if self._capturer is None:
+            return None
+        start_seq = self._last_seq
+        deadline = time.time() + timeout
+        client_w, client_h = win.client_size()
+        while time.time() < deadline:
+            got = self._capturer.grab()
+            if got is not None and got[1] != start_seq:
+                image, seq = got
+                if abs(image.shape[1] - client_w) <= 8 and abs(image.shape[0] - client_h) <= 8:
+                    self._last_seq = seq
+                    return image
+            time.sleep(0.05)
+        return None
 
     # ---------- 采集 ----------
 
@@ -210,6 +361,10 @@ class Pipeline:
             if seq == self._last_seq:
                 return None
             self._last_seq = seq
+            client_w, client_h = win.client_size()
+            if abs(image.shape[1] - client_w) > 8 or abs(image.shape[0] - client_h) > 8:
+                self._close_capturer()
+                raise CaptureError("采集画面尺寸异常（窗口可能刚还原或缩放），正在重新连接…")
             signature = _signature(image)
             if self._last_signature is not None and _similar(
                 self._last_signature, signature, SIGNATURE_THRESHOLD
@@ -218,10 +373,10 @@ class Pipeline:
             self._last_signature = signature
             return image, "wgc"
 
-        # GDI 兜底：只能读屏幕可见像素，因此要求微信在前台
-        if not is_foreground(win.hwnd):
+        # GDI 兜底：只能读屏幕可见像素，所以必须确认微信真的在最上层
+        if not is_foreground(win.hwnd) or is_covered(win):
             raise CaptureError(
-                "微信窗口被遮挡：请把微信切到前台，或安装 windows-capture 以支持后台采集"
+                "微信窗口被其他窗口遮挡，已暂停读取（切回微信前台会自动继续）"
             )
         image = grab_client(win)
         signature = _signature(image)
@@ -283,11 +438,21 @@ class Pipeline:
         self.on_analysis(analysis)
 
     def _persist(self, messages: list[Message]) -> None:
-        for message in messages:
-            try:
-                self.store.add_message(message)
-            except Exception:
-                pass
+        try:
+            self.store.add_messages_dedup(messages)
+        except Exception:
+            pass
+
+    def _persist_bubbles(self, session: str, bubbles) -> int:
+        now = time.time()
+        messages = [
+            Message(session=session, text=bubble.text, is_me=bubble.is_me, ts=now + idx * 0.001)
+            for idx, bubble in enumerate(bubbles)
+        ]
+        try:
+            return self.store.add_messages_dedup(messages)
+        except Exception:
+            return 0
 
     def _status(self, state: str, message: str) -> None:
         if (state, message) == self._last_status:
@@ -295,6 +460,10 @@ class Pipeline:
         self._last_status = (state, message)
         self._last_error = message
         self.on_status(state, message)
+
+
+def _name_key(name: str) -> str:
+    return "".join(ch for ch in (name or "") if ch.isalnum()).lower()
 
 
 def _mode_text(mode: str) -> str:

@@ -134,3 +134,10 @@ def test_draft_json_repair_retries(tmp_path) -> None:
     assert len(llm.calls) == 3
     assert any("只输出一个合法 JSON" in user for _sys, user in llm.calls)
     store.close()
+
+
+def test_analyze_reports_context_count(tmp_path) -> None:
+    engine, _llm, store = make_engine(tmp_path)
+    analysis = engine.analyze("Alice", history(), history()[-1:])
+    assert analysis.context_count == len(history())
+    store.close()
