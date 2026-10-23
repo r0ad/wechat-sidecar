@@ -23,6 +23,8 @@ class MarkerLLM:
                 "intent": "提问",
                 "emotion": "好奇",
                 "urgency": 5,
+                "questions": ["明天几点", "在哪见"],
+                "must_answer": ["时间", "地点"],
                 "need": "确认信息",
                 "action": "先回答",
             }
@@ -140,4 +142,22 @@ def test_analyze_reports_context_count(tmp_path) -> None:
     engine, _llm, store = make_engine(tmp_path)
     analysis = engine.analyze("Alice", history(), history()[-1:])
     assert analysis.context_count == len(history())
+    store.close()
+
+
+def test_multi_question_messages_are_combined(tmp_path) -> None:
+    engine, llm, store = make_engine(tmp_path)
+    messages = [
+        Message(session="Alice", text="明天有空吗", is_me=False, ts=1),
+        Message(session="Alice", text="好的", is_me=True, ts=2),
+        Message(session="Alice", text="几点方便？", is_me=False, ts=3),
+        Message(session="Alice", text="在哪见面？", is_me=False, ts=4),
+    ]
+    analysis = engine.analyze("Alice", messages, messages[-2:])
+    assert [m.text for m in analysis.incoming] == ["几点方便？", "在哪见面？"]
+    prompts = [user for system, user in llm.calls if "[DRAFT]" in system]
+    assert prompts
+    assert "几点方便？" in prompts[0] and "在哪见面？" in prompts[0]
+    assert "不要只回最后一句" in prompts[0]
+    assert "时间" in prompts[0] and "地点" in prompts[0]
     store.close()

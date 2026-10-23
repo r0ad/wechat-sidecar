@@ -68,6 +68,8 @@ class SuggestEngine:
         analysis.context_count = len(context)
         if self.cfg.privacy.redact_before_send:
             context = redact_messages(context)
+        pending = unanswered_messages(context) or list(incoming)
+        analysis.incoming = pending
         history_text = format_history(context)
         relationship = session
         style_profile = self.store.get_style_profile(session) if self.store else ""
@@ -89,6 +91,7 @@ class SuggestEngine:
             relationship,
             style_profile=style_profile,
             avoid=avoid,
+            unanswered=[message.text for message in pending],
         )
         try:
             draft, tokens = self._chat_json(DRAFT_SYSTEM, draft_user, max_tokens=800)
@@ -303,6 +306,15 @@ class SuggestEngine:
             return "", "模型没有返回风格画像"
         self.store.set_style_profile(session, profile)
         return profile, ""
+
+
+def unanswered_messages(messages: list[Message]) -> list[Message]:
+    """最近一条「我」发出的消息之后，对方还没得到回复的所有消息。"""
+    last_me = -1
+    for index, message in enumerate(messages):
+        if message.is_me:
+            last_me = index
+    return [m for m in messages[last_me + 1 :] if not m.is_me]
 
 
 def _clean_text(text: str) -> str:

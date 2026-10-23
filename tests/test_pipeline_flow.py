@@ -105,7 +105,7 @@ def test_pipeline_emits_candidates_for_new_incoming(monkeypatch, tmp_path) -> No
     assert len(analyses) == 1
     analysis = analyses[0]
     assert analysis.session == "测试会话"
-    assert [m.text for m in analysis.incoming] == ["明天有空吗"]
+    assert [m.text for m in analysis.incoming] == ["在吗", "明天有空吗"]
     assert len(analysis.candidates) == 3
     assert analysis.candidates[0].selected
 
