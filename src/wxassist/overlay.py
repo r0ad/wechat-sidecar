@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -84,10 +85,18 @@ STATE_COLORS = {
     "paused": "#5B6472",
 }
 
+REFINE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("更简短", "shorter"),
+    ("更正式", "formal"),
+    ("更温柔", "warmer"),
+    ("更幽默", "humorous"),
+)
+
 
 class CandidateCard(QFrame):
     fill_clicked = Signal(str)
     copy_clicked = Signal(str)
+    refine_clicked = Signal(str, str)
 
     def __init__(self, candidate: Candidate, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -110,23 +119,37 @@ class CandidateCard(QFrame):
             top.addWidget(score)
         layout.addLayout(top)
 
-        text = QLabel(candidate.text)
-        text.setObjectName("candidateText")
-        text.setWordWrap(True)
-        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(text)
+        self.text_label = QLabel(candidate.text)
+        self.text_label.setObjectName("candidateText")
+        self.text_label.setWordWrap(True)
+        self.text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.text_label)
 
         actions = QHBoxLayout()
-        actions.addStretch(1)
+        refine_btn = QPushButton("改写")
+        refine_btn.setObjectName("ghost")
+        menu = QMenu(refine_btn)
+        for label, key in REFINE_OPTIONS:
+            action = menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, k=key: self.refine_clicked.emit(self.text_label.text(), k)
+            )
+        refine_btn.setMenu(menu)
         copy_btn = QPushButton("复制")
         copy_btn.setObjectName("ghost")
-        copy_btn.clicked.connect(lambda: self.copy_clicked.emit(self.candidate.text))
+        copy_btn.clicked.connect(lambda: self.copy_clicked.emit(self.text_label.text()))
         fill_btn = QPushButton("填入")
         fill_btn.setObjectName("primary")
-        fill_btn.clicked.connect(lambda: self.fill_clicked.emit(self.candidate.text))
+        fill_btn.clicked.connect(lambda: self.fill_clicked.emit(self.text_label.text()))
+        actions.addWidget(refine_btn)
+        actions.addStretch(1)
         actions.addWidget(copy_btn)
         actions.addWidget(fill_btn)
         layout.addLayout(actions)
+
+    def set_text(self, text: str) -> None:
+        self.candidate.text = text
+        self.text_label.setText(text)
 
 
 class Overlay(QWidget):
@@ -136,6 +159,10 @@ class Overlay(QWidget):
     pause_toggled = Signal(bool)
     hidden_by_user = Signal()
     quit_requested = Signal()
+    settings_requested = Signal()
+    summary_requested = Signal()
+    learn_style_requested = Signal()
+    refine_requested = Signal(str, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -147,9 +174,11 @@ class Overlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet(STYLESHEET)
-        self.resize(430, 620)
+        self.resize(440, 730)
         self._drag_offset = None
         self._paused = False
+        self._cards: list[CandidateCard] = []
+        self._model_ready = True
         self._build_ui()
         self._place_default()
 
@@ -179,6 +208,12 @@ class Overlay(QWidget):
         self.session_label.setObjectName("session")
         header.addWidget(self.session_label)
         header.addStretch(1)
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setObjectName("ghost")
+        self.settings_btn.setFixedSize(26, 22)
+        self.settings_btn.setToolTip("模型设置")
+        self.settings_btn.clicked.connect(self.settings_requested.emit)
+        header.addWidget(self.settings_btn)
         hide_btn = QPushButton("—")
         hide_btn.setObjectName("ghost")
         hide_btn.setFixedSize(26, 22)
@@ -238,17 +273,31 @@ class Overlay(QWidget):
         self.candidates_layout.setSpacing(8)
         self.candidates_layout.addStretch(1)
         self.scroll.setWidget(self.candidates_host)
+        self.scroll.hide()
         layout.addWidget(self.scroll, 1)
 
         self.empty_label = QLabel("还没有候选。对方发来新消息后会自动生成。")
         self.empty_label.setObjectName("hint")
         self.empty_label.setWordWrap(True)
-        layout.addWidget(self.empty_label)
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty_label, 1)
 
         # footer
-        footer = QHBoxLayout()
-        self.regenerate_btn = QPushButton("重新生成")
+        row1 = QHBoxLayout()
+        self.regenerate_btn = QPushButton("换一批")
         self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
+        self.summary_btn = QPushButton("总结会话")
+        self.summary_btn.clicked.connect(self.summary_requested.emit)
+        self.style_btn = QPushButton("学我说话")
+        self.style_btn.setToolTip("用我的历史回复生成说话风格画像，让候选更像本人")
+        self.style_btn.clicked.connect(self.learn_style_requested.emit)
+        row1.addWidget(self.regenerate_btn)
+        row1.addWidget(self.summary_btn)
+        row1.addWidget(self.style_btn)
+        row1.addStretch(1)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
         self.pause_btn = QPushButton("暂停采集")
         self.pause_btn.clicked.connect(self._toggle_pause)
         debug_btn = QPushButton("调试")
@@ -257,12 +306,11 @@ class Overlay(QWidget):
         quit_btn = QPushButton("退出")
         quit_btn.setObjectName("ghost")
         quit_btn.clicked.connect(self.quit_requested.emit)
-        footer.addWidget(self.regenerate_btn)
-        footer.addWidget(self.pause_btn)
-        footer.addStretch(1)
-        footer.addWidget(debug_btn)
-        footer.addWidget(quit_btn)
-        layout.addLayout(footer)
+        row2.addWidget(self.pause_btn)
+        row2.addStretch(1)
+        row2.addWidget(debug_btn)
+        row2.addWidget(quit_btn)
+        layout.addLayout(row2)
 
         self.hint_label = QLabel("只读截屏 · 本地 OCR · 永不自动发送，发送前请自己核对")
         self.hint_label.setObjectName("hint")
@@ -307,18 +355,22 @@ class Overlay(QWidget):
         if analysis.error:
             self.empty_label.setText(f"生成失败：{analysis.error}")
             self.empty_label.show()
-            self.scroll.show()
+            self.scroll.hide()
             return
 
         for candidate in analysis.candidates:
             card = CandidateCard(candidate)
             card.fill_clicked.connect(self.fill_requested.emit)
             card.copy_clicked.connect(self.copy_requested.emit)
+            card.refine_clicked.connect(self.refine_requested.emit)
+            self._cards.append(card)
             self.candidates_layout.insertWidget(self.candidates_layout.count() - 1, card)
         self.empty_label.hide()
         self.scroll.show()
-        source = "演示数据" if analysis.provider == "mock" else analysis.provider
-        self.status_label.setText(f"生成完成 · {analysis.latency_ms}ms · {source}")
+        source = analysis.provider or "model"
+        tokens = analysis.tokens_in + analysis.tokens_out
+        token_text = f" · {tokens} tok" if tokens else ""
+        self.status_label.setText(f"生成完成 · {analysis.latency_ms}ms · {source}{token_text}")
 
     def show_debug(self, session: str, bubbles, lines, extra: str = "") -> None:
         if not self.debug_panel.isVisible():
@@ -330,6 +382,34 @@ class Overlay(QWidget):
         if extra:
             body.append(extra)
         self.debug_panel.setPlainText("\n".join(body))
+
+    def update_candidate_text(self, original: str, new_text: str) -> None:
+        for card in self._cards:
+            if card.candidate.text == original:
+                card.set_text(new_text)
+                self.status_label.setText("已按你的要求改写")
+                return
+
+    def set_model_ready(self, ready: bool, hint: str = "") -> None:
+        self._model_ready = ready
+        if ready:
+            if not self._cards:
+                self.empty_label.setText("还没有候选。对方发来新消息后会自动生成。")
+                self.empty_label.show()
+                self.scroll.hide()
+            return
+        self.empty_label.setText(
+            hint
+            or "还没有配置大模型：点右上角 ⚙ 选择服务商（推荐 DeepSeek）并填入 API Key，"
+            "配置后对方来新消息就会自动生成候选。"
+        )
+        self.empty_label.show()
+        self.scroll.hide()
+        self.status_label.setText("未配置模型 · 点 ⚙ 设置")
+
+    def set_busy(self, message: str) -> None:
+        self.status_label.setText(message)
+        self.dot.setStyleSheet(f"color: {WARN}; font-size: 12px;")
 
     # ---------- 内部 ----------
 
@@ -348,6 +428,7 @@ class Overlay(QWidget):
             chip.hide()
 
     def _clear_candidates(self) -> None:
+        self._cards.clear()
         while self.candidates_layout.count() > 1:
             item = self.candidates_layout.takeAt(0)
             widget = item.widget()

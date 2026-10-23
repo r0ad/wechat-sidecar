@@ -40,6 +40,7 @@ class Pipeline:
         on_analysis,
         on_status,
         on_debug=None,
+        on_session=None,
     ) -> None:
         self.cfg = cfg
         self.store = store
@@ -47,6 +48,7 @@ class Pipeline:
         self.on_analysis = on_analysis
         self.on_status = on_status
         self.on_debug = on_debug or (lambda *_args, **_kwargs: None)
+        self.on_session = on_session or (lambda _session: None)
 
         self._parser = BubbleParser(cfg.capture)
         self._ocr = OcrEngine()
@@ -64,6 +66,10 @@ class Pipeline:
         self._capture_mode = ""
         self._capture_hwnd: int | None = None
         self._last_seq = -1
+
+        self._baseline_ts = 0.0
+        self._pending: list[Message] = []
+        self._pending_at = 0.0
 
     # ---------- 控制 ----------
 
@@ -94,8 +100,8 @@ class Pipeline:
     def paused(self) -> bool:
         return self._paused.is_set()
 
-    def analyze_now(self, session: str | None = None) -> None:
-        """手动重新生成：用最近的上下文再分析一次。"""
+    def analyze_now(self, session: str | None = None, avoid: list[str] | None = None) -> None:
+        """手动换一批：用最近的上下文再分析一次，可传入要避开的旧候选。"""
         session = session or self._session
         if not session:
             self._status("wait", "还没有会话，先打开一个微信聊天")
@@ -105,7 +111,7 @@ class Pipeline:
         if not incoming:
             self._status("wait", "没有可分析的对方消息")
             return
-        self._emit_analysis(session, history, incoming)
+        self._emit_analysis(session, history, incoming, avoid=avoid)
 
     # ---------- 主循环 ----------
 
@@ -118,6 +124,7 @@ class Pipeline:
                     time.sleep(0.2)
                     continue
                 self._tick()
+                self._flush_pending()
             except CaptureError as exc:
                 self._status("wait", str(exc))
                 self._close_capturer()
@@ -156,12 +163,16 @@ class Pipeline:
             self._tracker = SessionTracker(session)
             new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
             self._persist(new_messages)  # 首帧只建立基线
+            self._baseline_ts = time.time()
+            self.on_session(session)
             self._status("ok", f"监听中 · {session}（{_mode_text(mode)}）")
             self.on_debug(session, result, lines, "")
             return
 
         if session != self._tracker.session:
             self._tracker.switch_session(session, result.bubbles)
+            self._pending.clear()
+            self.on_session(session)
             self._status("ok", f"已切换会话 · {session}")
             self.on_debug(session, result, lines, "")
             return
@@ -177,9 +188,7 @@ class Pipeline:
         if not incoming:
             self._status("ok", f"监听中 · {session}（刚发出一条）")
             return
-        history = self.store.recent_messages(session, self.cfg.privacy.max_context_messages)
-        self._status("thinking", f"正在分析 · {session}")
-        self._emit_analysis(session, history, incoming)
+        self._enqueue_incoming(session, incoming)
 
     # ---------- 采集 ----------
 
@@ -235,8 +244,38 @@ class Pipeline:
 
     # ---------- 工具 ----------
 
-    def _emit_analysis(self, session: str, history: list[Message], incoming: list[Message]) -> None:
-        analysis: Analysis = self.engine.analyze(session, history, incoming)
+    def _enqueue_incoming(self, session: str, incoming: list[Message]) -> None:
+        # 启动后的前几秒画面可能还在渲染，先当基线，避免一上来就误报
+        if time.time() - self._baseline_ts < self.cfg.capture.startup_warmup_sec:
+            self._status("ok", f"监听中 · {session}（画面稳定中）")
+            return
+        self._pending = (self._pending + incoming)[-5:]
+        self._pending_at = time.time()
+        count = len(self._pending)
+        suffix = f"{count} 条新消息" if count > 1 else "新消息"
+        self._status("thinking", f"收到{suffix} · 正在生成候选…")
+
+    def _flush_pending(self) -> None:
+        """防抖：连续多条消息合并成一次分析；不在截屏线程里阻塞等待。"""
+        if not self._pending:
+            return
+        if time.time() - self._pending_at < self.cfg.capture.analysis_debounce_sec:
+            return
+        pending, self._pending = self._pending, []
+        session = self._session
+        if not session:
+            return
+        history = self.store.recent_messages(session, self.cfg.privacy.max_context_messages)
+        self._emit_analysis(session, history, pending)
+
+    def _emit_analysis(
+        self,
+        session: str,
+        history: list[Message],
+        incoming: list[Message],
+        avoid: list[str] | None = None,
+    ) -> None:
+        analysis: Analysis = self.engine.analyze(session, history, incoming, avoid=avoid)
         if analysis.ok:
             self._status("ok", f"监听中 · {session}")
         elif analysis.error:

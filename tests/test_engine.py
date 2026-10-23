@@ -28,7 +28,7 @@ class FakeLLM:
         }
         self.calls = 0
 
-    def chat(self, system: str, user: str, json_mode: bool = True) -> LLMResult:
+    def chat(self, system: str, user: str, json_mode: bool = True, **kwargs) -> LLMResult:
         self.calls += 1
         payload = self.intent if "[INTENT]" in system else self.draft
         return LLMResult(
@@ -82,7 +82,7 @@ def test_analyze_without_key_reports_error(monkeypatch) -> None:
     engine = SuggestEngine(LLMClient(cfg.llm), cfg)
     analysis = engine.analyze("Alice", history(), history()[-1:])
     assert not analysis.ok
-    assert "API Key" in analysis.error
+    assert "配置模型" in analysis.error or "API Key" in analysis.error
 
 
 def test_filters_duplicates_parroting_and_too_long(monkeypatch) -> None:
@@ -124,7 +124,7 @@ def test_injection_candidate_dropped(monkeypatch) -> None:
 
 def test_llm_error_propagates(monkeypatch) -> None:
     class BrokenLLM:
-        def chat(self, system, user, json_mode=True):
+        def chat(self, system, user, json_mode=True, **kwargs):
             raise LLMError("boom")
 
     engine = SuggestEngine(BrokenLLM(), make_cfg(monkeypatch))  # type: ignore[arg-type]

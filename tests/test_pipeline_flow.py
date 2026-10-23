@@ -61,6 +61,8 @@ def make_pipeline(monkeypatch, tmp_path) -> tuple[Pipeline, list]:
     cfg = Config.load(None)
     cfg.llm.provider = "mock"
     cfg.capture.interval_ms = 200
+    cfg.capture.startup_warmup_sec = 0.0
+    cfg.capture.analysis_debounce_sec = 0.0
     store = Store(tmp_path / "flow.db")
     engine = SuggestEngine(LLMClient(cfg.llm), cfg, store)
 
@@ -97,6 +99,7 @@ def test_pipeline_emits_candidates_for_new_incoming(monkeypatch, tmp_path) -> No
     pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
     pipeline._ocr.recognize = lambda image, bbox=None: lines2  # type: ignore[method-assign]
     pipeline._tick()
+    pipeline._flush_pending()
 
     assert len(analyses) == 1
     analysis = analyses[0]
@@ -122,6 +125,7 @@ def test_pipeline_ignores_own_messages_and_session_switch(monkeypatch, tmp_path)
     pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
     pipeline._ocr.recognize = lambda image, bbox=None: [header_line("A"), line1b, line_mine]  # type: ignore[method-assign]
     pipeline._tick()
+    pipeline._flush_pending()
     assert analyses == []
 
     # 切换会话：只重置基线，不分析历史
@@ -130,6 +134,7 @@ def test_pipeline_ignores_own_messages_and_session_switch(monkeypatch, tmp_path)
     pipeline._frame = lambda win: (frame3, "wgc")  # type: ignore[method-assign]
     pipeline._ocr.recognize = lambda image, bbox=None: [header_line("B"), hist]  # type: ignore[method-assign]
     pipeline._tick()
+    pipeline._flush_pending()
     assert analyses == []
     assert pipeline._tracker is not None and pipeline._tracker.session == "B"
 

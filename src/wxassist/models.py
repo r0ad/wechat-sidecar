@@ -94,12 +94,31 @@ class Analysis:
     warning: str = ""
     error: str = ""
     latency_ms: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
     provider: str = ""
     model: str = ""
 
     @property
     def ok(self) -> bool:
         return not self.error and bool(self.candidates)
+
+
+@dataclass
+class SessionSummary:
+    """会话摘要（AI 生成）。"""
+
+    session: str
+    summary: str = ""
+    topics: list[str] = field(default_factory=list)
+    todos: list[str] = field(default_factory=list)
+    risk: str = ""
+    error: str = ""
+    latency_ms: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and bool(self.summary)
 
 
 @dataclass

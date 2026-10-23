@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS suggestions (
     adopted_text TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS style_profiles (
+    session TEXT PRIMARY KEY,
+    profile TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -130,3 +136,22 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # ---------- 风格画像 ----------
+
+    def get_style_profile(self, session: str) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT profile FROM style_profiles WHERE session = ?", (session,)
+            ).fetchone()
+        return str(row["profile"]) if row else ""
+
+    def set_style_profile(self, session: str, profile: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO style_profiles(session, profile, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(session) DO UPDATE SET profile=excluded.profile,"
+                " updated_at=excluded.updated_at",
+                (session, profile, time.time()),
+            )
+            self._conn.commit()
