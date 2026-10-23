@@ -53,6 +53,8 @@
 - **上下文读取**：
   - 打开/切换聊天时，把当前屏幕上的整段消息读进本地上下文；
   - 点「读取更多」自动向上翻 3 屏，把更早的历史补进上下文（滚完自动回到底部）；
+  - 只把「连续两帧都稳定出现」的气泡写进上下文，滚动/重绘产生的碎片和 OCR 抖动会被丢掉；
+  - 只认聊天页（底部有「发送」按钮）：公众号文章/小程序/朋友圈不会被误读成聊天；
   - 点「上下文 N」可展开查看实际读到的消息列表，状态栏也会显示本次用了多少条上下文。
 - **真实大模型接入**：
   - DeepSeek / OpenAI / 通义千问 / 智谱 / 硅基流动 / 本地 Ollama / 任意 OpenAI 兼容服务；
@@ -76,6 +78,9 @@
 - Python 3.10 – 3.12
 - 微信 **4.x**（主窗口标题必须恰好是「微信」；3.9 版本布局像素不同，可通过配置调整）
 - 可访问所选大模型服务（DeepSeek 需要 API Key；Ollama 需要本机运行）
+
+> ⚠ 不要用 **Anaconda 自带的 Python** 创建虚拟环境：它的 `msvcp140.dll` 会与 PySide6 冲突，
+> 报 `ImportError: DLL load failed while importing QtCore`。请用 [python.org](https://www.python.org/downloads/) 的 3.10–3.12。
 
 ## 安装
 
@@ -283,12 +288,14 @@ python run.py --selftest --snapshot snapshots/calib.png --debug
 | 气泡识别成一片 | `--selftest --debug` 看 OCR 行坐标，调整 `chat_left_px/header_px/input_px` |
 | 点「填入」没反应 | 默认 `copy` 模式只写剪贴板，去微信 `Ctrl+V`；`--mode paste` 才会自动粘贴 |
 | 杀软报毒 | 程序无注入行为；可用 `--selftest` 验证，或自行从源码运行 |
+| `ImportError: DLL load failed while importing QtCore` | 常见于 Anaconda 的 Python：用 python.org 的 Python 重新 `python -m venv .venv`，再 `pip install -r requirements.txt` |
 | 提示「已经在运行了」 | 同一时间只允许一个实例；先退出旧悬浮窗（点「退出」）再启动 |
 
 ## 开发与测试
 
 ```powershell
-python -m pytest -q          # 69 个测试
+pip install -r requirements-dev.txt
+python -m pytest -q          # 70 个测试
 ```
 
 测试不依赖真实微信窗口、不调用外部 API：

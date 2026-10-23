@@ -20,7 +20,8 @@
     "min_line_gap_px": 10,
     "startup_warmup_sec": 2.0,
     "analysis_debounce_sec": 1.5,
-    "load_more_pages": 3
+    "load_more_pages": 3,
+    "require_send_button": true
   },
   "privacy": {
     "redact_before_send": true,

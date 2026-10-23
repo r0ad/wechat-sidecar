@@ -167,6 +167,15 @@ class Pipeline:
         height, width = image.shape[:2]
         region = compute_region(width, height, win.dpi_scale(), self.cfg.capture)
 
+        if self.cfg.capture.require_send_button and not self._is_chat_view(image, region):
+            self._tracker = None
+            self._pending.clear()
+            self._status(
+                "wait",
+                "当前微信不是聊天页面（可能是公众号/文章/小程序），已暂停读取；回到聊天页自动恢复",
+            )
+            return
+
         lines = self._ocr.recognize(
             image, bbox=(region.chat_left, 0, width, region.input_top)
         )
@@ -179,6 +188,7 @@ class Pipeline:
             self._tracker = SessionTracker(session)
             new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
             self._persist(new_messages)  # 首帧只建立基线
+            self._reset_confirm(session, result.bubbles)
             self._baseline_ts = time.time()
             self.on_session(session)
             self._status("ok", f"监听中 · {session}（{_mode_text(mode)}）")
@@ -188,6 +198,7 @@ class Pipeline:
         if session != self._tracker.session:
             self._tracker.switch_session(session, result.bubbles)
             self._persist_bubbles(session, result.bubbles)  # 新会话的可见历史也要进上下文
+            self._reset_confirm(session, result.bubbles)
             self._pending.clear()
             self.on_session(session)
             stored = self.store.count_messages(session)
@@ -195,8 +206,8 @@ class Pipeline:
             self.on_debug(session, result, lines, "")
             return
 
+        self._confirm_messages(session, result.bubbles)
         new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
-        self._persist(new_messages)
         self.on_debug(session, result, lines, "")
         if not new_messages:
             self._status("ok", f"监听中 · {session}")
@@ -207,6 +218,19 @@ class Pipeline:
             self._status("ok", f"监听中 · {session}（刚发出一条）")
             return
         self._enqueue_incoming(session, incoming)
+
+    def _is_chat_view(self, image, region) -> bool:
+        """聊天页底部输入区一定有「发送」按钮；文章/小程序/朋友圈没有。"""
+        height, width = image.shape[:2]
+        if region.input_top >= height - 4:
+            return False
+        try:
+            footer_lines = self._ocr.recognize(
+                image, bbox=(region.chat_left, region.input_top, width, height)
+            )
+        except OcrError:
+            return False
+        return footer_has_send(footer_lines)
 
     def _resolve_session(self, raw: str) -> str:
         """会话名稳定化：OCR 抖动/图标误识不能把同一个会话拆成多个。"""
@@ -421,6 +445,11 @@ class Pipeline:
         if not session:
             return
         history = self.store.recent_messages(session, self.cfg.privacy.max_context_messages)
+        # 新消息可能还没通过「两帧确认」入库，这里直接补到上下文末尾
+        existing = {message.digest() for message in history}
+        for message in pending:
+            if message.digest() not in existing:
+                history.append(message)
         self._emit_analysis(session, history, pending)
 
     def _emit_analysis(
@@ -436,6 +465,33 @@ class Pipeline:
         elif analysis.error:
             self._status("error", analysis.error)
         self.on_analysis(analysis)
+
+    def _reset_confirm(self, session: str, bubbles) -> None:
+        self._confirm = {bubble.digest(): (session, bubble) for bubble in bubbles}
+
+    def _confirm_messages(self, session: str, bubbles) -> int:
+        """只把「连续两帧都出现」的消息写进上下文，过滤滚动/重绘产生的碎片。"""
+        current = {bubble.digest(): bubble for bubble in bubbles}
+        ready_keys = {
+            digest
+            for digest in current
+            if self._confirm.get(digest) is not None and self._confirm[digest][0] == session
+        }
+        to_store = [
+            Message(session=session, text=current[d].text, is_me=current[d].is_me, ts=time.time())
+            for d in ready_keys
+        ]
+        self._confirm = {
+            digest: (session, bubble)
+            for digest, bubble in current.items()
+            if digest not in ready_keys
+        }
+        if not to_store:
+            return 0
+        try:
+            return self.store.add_messages_dedup(to_store)
+        except Exception:
+            return 0
 
     def _persist(self, messages: list[Message]) -> None:
         try:
@@ -460,6 +516,17 @@ class Pipeline:
         self._last_status = (state, message)
         self._last_error = message
         self.on_status(state, message)
+
+
+SEND_TEXTS = ("发送", "发送(", "Send", "send")
+
+
+def footer_has_send(lines) -> bool:
+    for line in lines:
+        text = (line.text or "").strip()
+        if any(marker in text for marker in SEND_TEXTS):
+            return True
+    return False
 
 
 def _name_key(name: str) -> str:

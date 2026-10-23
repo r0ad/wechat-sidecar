@@ -63,6 +63,7 @@ def make_pipeline(monkeypatch, tmp_path) -> tuple[Pipeline, list]:
     cfg.capture.interval_ms = 200
     cfg.capture.startup_warmup_sec = 0.0
     cfg.capture.analysis_debounce_sec = 0.0
+    cfg.capture.require_send_button = False  # 合成帧没有「发送」按钮，测试里跳过聊天页门禁
     store = Store(tmp_path / "flow.db")
     engine = SuggestEngine(LLMClient(cfg.llm), cfg, store)
 
@@ -219,3 +220,22 @@ def test_empty_session_header_keeps_current(monkeypatch, tmp_path) -> None:
 
     assert pipeline._tracker is not None
     assert pipeline._tracker.session == "Alice"
+
+
+def test_chat_view_gate_blocks_non_chat_page(monkeypatch, tmp_path) -> None:
+    cfg = Config.load(None)
+    store = Store(tmp_path / "gate.db")
+    engine = SuggestEngine(LLMClient(cfg.llm), cfg, store)
+    monkeypatch.setattr(pipeline_mod, "find_window", lambda: FakeWindow())
+    monkeypatch.setattr(pipeline_mod, "is_minimized", lambda win: False)
+    cfg.capture.require_send_button = True
+    pipeline = Pipeline(cfg, store, engine, lambda a: None, lambda s, m: None)
+    frame = base_image()
+    line, frame = bubble(frame, "在吗", 300, is_me=False)
+    pipeline._frame = lambda win: (frame, "wgc")  # type: ignore[method-assign]
+    # 底部没有「发送」→ 判定不是聊天页，不读任何消息
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("文章页"), line]  # type: ignore[method-assign]
+    pipeline._tick()
+    assert pipeline._tracker is None
+    assert store.sessions() == []
+    store.close()
