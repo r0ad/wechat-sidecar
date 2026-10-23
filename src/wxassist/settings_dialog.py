@@ -21,6 +21,7 @@ from . import secrets_store
 from .config import Config, LLMConfig
 from .llm import ConnectionResult, LLMClient
 from .providers import PRESETS, get_preset
+from .resources import app_icon
 
 BG = "#181C24"
 FG = "#E6E8EB"
@@ -70,6 +71,7 @@ class SettingsDialog(QDialog):
         self.llm = llm
         self.data_dir = data_dir
         self.setWindowTitle("模型设置")
+        self.setWindowIcon(app_icon())
         self.setStyleSheet(STYLE)
         self.setMinimumWidth(520)
         self._testing = False

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import SessionSummary
+from .resources import app_icon
 
 STYLE = """
 QDialog { background: #181C24; }
@@ -41,6 +42,7 @@ class SummaryDialog(QDialog):
         super().__init__(parent)
         self.summary = summary
         self.setWindowTitle(f"会话总结 · {summary.session}")
+        self.setWindowIcon(app_icon())
         self.setStyleSheet(STYLE)
         self.resize(520, 460)
         self._build()

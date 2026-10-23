@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import Analysis, Candidate
+from .resources import app_icon
 
 ACCENT = "#07C160"
 DANGER = "#E5484D"
@@ -189,6 +190,7 @@ class Overlay(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("微信 AI 回复助手")
+        self.setWindowIcon(app_icon())
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -540,8 +542,18 @@ class Overlay(QWidget):
 
 
 def create_app() -> QApplication:
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "wxassist.reply.assistant"
+        )
+    except Exception:
+        pass
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("wxassist")
+    app.setApplicationDisplayName("微信 AI 回复助手")
+    app.setWindowIcon(app_icon())
     font = QFont("Microsoft YaHei UI", 9)
     app.setFont(font)
     return app
