@@ -85,7 +85,7 @@ if ONEFILE:
         a.binaries,
         a.datas,
         [],
-        name="wxassist",
+        name="wxassist-onefile",
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,

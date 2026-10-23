@@ -84,8 +84,12 @@ def main() -> int:
         return result.returncode
 
     print("[3/3] 收尾…")
-    target_dir = ROOT / "dist" if args.onefile else ROOT / "dist" / "wxassist"
-    exe = target_dir / "wxassist.exe"
+    if args.onefile:
+        target_dir = ROOT / "dist"
+        exe = target_dir / "wxassist-onefile.exe"
+    else:
+        target_dir = ROOT / "dist" / "wxassist"
+        exe = target_dir / "wxassist.exe"
 
     # 附带示例配置，方便第一次运行
     example = ROOT / "config.example.json"
@@ -103,6 +107,8 @@ def main() -> int:
     print("\n[ok] 打包完成")
     print(f"     exe:  {exe}")
     print(f"     大小: {size_mb:.1f} MB（exe 本体；目录版总量见 dist/wxassist/）")
+    if not args.console:
+        print("     启动时不会出现控制台黑窗口（需要调试请加 --console 重新打包）")
     print("\n运行方式：")
     print(f"     {exe}")
     print("     首次运行点悬浮窗右上角 ⚙ 填 API Key（或先设置环境变量 DEEPSEEK_API_KEY）")

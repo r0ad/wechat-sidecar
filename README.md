@@ -162,6 +162,7 @@ python build.py --console       # 保留控制台窗口，排查启动问题
 
 - 打包配置在 [`wxassist.spec`](wxassist.spec)，脚本在 [`build.py`](build.py)；
 - 默认是 **windowed + 目录版**：启动快、体积可控；`--onefile` 单文件启动会慢 3–8 秒；
+- windowed 版双击**不会出现控制台黑窗口**；只有 `--console` 打出来的调试版才有控制台；
 - 产物里已带图标、版本信息、RapidOCR 模型和 `config.example.json`；
 - 只能在 **同架构 Windows** 上打包（PyInstaller 不支持交叉编译）；
 - 首次运行 exe 同样点 ⚙ 配置 API Key；配置与数据仍然写到 `%LOCALAPPDATA%\wxassist\`；
