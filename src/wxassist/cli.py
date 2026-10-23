@@ -89,7 +89,7 @@ def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
     try:
         window = find_window()
     except Exception as exc:
-        print(f"[x] 找不到微信窗口：{exc}")
+        print(f"[x] {exc}")
         return 2
 
     print(
