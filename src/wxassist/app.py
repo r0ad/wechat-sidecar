@@ -55,6 +55,7 @@ class AppController:
         self.overlay.copy_requested.connect(self._on_copy)
         self.overlay.regenerate_requested.connect(self._on_regenerate)
         self.overlay.pause_toggled.connect(self._on_pause)
+        self.overlay.quit_requested.connect(self.app.quit)
 
     # ---------- 生命周期 ----------
 
@@ -100,6 +101,8 @@ class AppController:
                 text,
                 win,
                 mode=self.cfg.filler.mode,
+                chat_left_px=self.cfg.capture.chat_left_px,
+                dpi_scale=win.dpi_scale(),
                 chat_left_ratio=self.cfg.capture.chat_left_ratio,
             )
             if action == "pasted":

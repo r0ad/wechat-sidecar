@@ -127,7 +127,10 @@ def find_window() -> WeChatWindow:
     """找到微信主窗口；优先非最小化、面积最大的那个。"""
     candidates = list_candidates()
     if not candidates:
-        raise CaptureError("没有找到微信窗口，请先登录并打开微信主界面")
+        raise CaptureError(
+            "没有找到微信窗口：请确认微信已登录、主窗口没有关闭到托盘"
+            "（点一下任务栏/托盘里的微信图标）"
+        )
     normal = [w for w in candidates if not w.minimized]
     if not normal:
         raise CaptureError("微信窗口已最小化，请先还原窗口（最小化时无法截屏）")

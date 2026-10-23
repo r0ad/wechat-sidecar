@@ -135,6 +135,7 @@ class Overlay(QWidget):
     regenerate_requested = Signal()
     pause_toggled = Signal(bool)
     hidden_by_user = Signal()
+    quit_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -253,10 +254,14 @@ class Overlay(QWidget):
         debug_btn = QPushButton("调试")
         debug_btn.setObjectName("ghost")
         debug_btn.clicked.connect(self._toggle_debug)
+        quit_btn = QPushButton("退出")
+        quit_btn.setObjectName("ghost")
+        quit_btn.clicked.connect(self.quit_requested.emit)
         footer.addWidget(self.regenerate_btn)
         footer.addWidget(self.pause_btn)
         footer.addStretch(1)
         footer.addWidget(debug_btn)
+        footer.addWidget(quit_btn)
         layout.addLayout(footer)
 
         self.hint_label = QLabel("只读截屏 · 本地 OCR · 永不自动发送，发送前请自己核对")
@@ -312,7 +317,8 @@ class Overlay(QWidget):
             self.candidates_layout.insertWidget(self.candidates_layout.count() - 1, card)
         self.empty_label.hide()
         self.scroll.show()
-        self.status_label.setText(f"生成完成 · {analysis.latency_ms}ms · {analysis.provider}")
+        source = "演示数据" if analysis.provider == "mock" else analysis.provider
+        self.status_label.setText(f"生成完成 · {analysis.latency_ms}ms · {source}")
 
     def show_debug(self, session: str, bubbles, lines, extra: str = "") -> None:
         if not self.debug_panel.isVisible():
