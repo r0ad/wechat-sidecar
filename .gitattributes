@@ -1,0 +1,7 @@
+# 换行符统一（Windows 下避免 CRLF/LF 混杂）
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
