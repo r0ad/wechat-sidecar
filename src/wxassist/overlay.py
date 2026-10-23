@@ -184,6 +184,7 @@ class Overlay(QWidget):
     refine_requested = Signal(str, str)
     context_requested = Signal()
     load_more_requested = Signal()
+    pin_toggled = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -229,6 +230,13 @@ class Overlay(QWidget):
         self.session_label.setObjectName("session")
         header.addWidget(self.session_label)
         header.addStretch(1)
+        self.pin_btn = QPushButton("📌")
+        self.pin_btn.setObjectName("ghost")
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setFixedSize(26, 22)
+        self.pin_btn.setToolTip("常驻显示：不再自动隐藏（再次点击恢复自动隐藏）")
+        self.pin_btn.clicked.connect(self.pin_toggled.emit)
+        header.addWidget(self.pin_btn)
         self.settings_btn = QPushButton("⚙")
         self.settings_btn.setObjectName("ghost")
         self.settings_btn.setFixedSize(26, 22)
@@ -427,6 +435,14 @@ class Overlay(QWidget):
                 card.set_text(new_text)
                 self.status_label.setText("已按你的要求改写")
                 return
+
+    def set_pinned(self, pinned: bool) -> None:
+        self.pin_btn.blockSignals(True)
+        self.pin_btn.setChecked(pinned)
+        self.pin_btn.blockSignals(False)
+        self.pin_btn.setToolTip(
+            "已常驻显示（点击恢复自动隐藏）" if pinned else "常驻显示：不再自动隐藏"
+        )
 
     def set_model_ready(self, ready: bool, hint: str = "") -> None:
         self._model_ready = ready

@@ -131,6 +131,7 @@ class AppController:
         self.overlay.refine_requested.connect(self._on_refine)
         self.overlay.context_requested.connect(self._on_context)
         self.overlay.load_more_requested.connect(self._on_load_more)
+        self.overlay.pin_toggled.connect(self._on_pin_toggled)
         self.bridge.context_updated.connect(self._on_context_updated)
 
     # ---------- 生命周期 ----------
@@ -145,6 +146,7 @@ class AppController:
         )
         self.overlay.show()
         self.overlay.set_model_ready(self.llm.has_key())
+        self.overlay.set_pinned(not self.cfg.ui.auto_hide)
         self.overlay.set_status("ok", "正在连接微信窗口…")
         if not self.llm.has_key():
             QTimer.singleShot(900, self._open_settings)
@@ -320,6 +322,17 @@ class AppController:
             args=(self._current_session, avoid),
             daemon=True,
         ).start()
+
+    def _on_pin_toggled(self, pinned: bool) -> None:
+        self.cfg.ui.auto_hide = not pinned
+        self.overlay.set_pinned(pinned)
+        self.overlay.set_status(
+            "ok", "已常驻显示（不会自动隐藏）" if pinned else "已恢复自动隐藏（离开微信时收起）"
+        )
+        try:
+            self.cfg.save(Path(self.cfg.data_dir) / "config.json")
+        except Exception:
+            pass
 
     def _on_pause(self, paused: bool) -> None:
         if self.pipeline is not None:
