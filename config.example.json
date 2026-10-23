@@ -32,7 +32,8 @@
     "hotkey": "ctrl+alt+j",
     "always_on_top": true,
     "opacity": 0.97,
-    "auto_hide": true
+    "auto_hide": true,
+    "follow_wechat": true
   },
   "filler": {
     "mode": "copy",

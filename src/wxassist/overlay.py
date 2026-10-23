@@ -237,6 +237,7 @@ class Overlay(QWidget):
     context_requested = Signal()
     load_more_requested = Signal()
     pin_toggled = Signal(bool)
+    moved_by_user = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -252,6 +253,8 @@ class Overlay(QWidget):
         self.setStyleSheet(STYLESHEET)
         self.resize(440, 730)
         self._drag_offset = None
+        self._dragging = False
+        self._drag_moved = False
         self._paused = False
         self._cards: list[CandidateCard] = []
         self._model_ready = True
@@ -599,16 +602,28 @@ class Overlay(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._dragging = True
+            self._drag_moved = False
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            new_pos = event.globalPosition().toPoint() - self._drag_offset
+            if new_pos != self.pos():
+                self._drag_moved = True
+            self.move(new_pos)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         self._drag_offset = None
+        self._dragging = False
+        if self._drag_moved:
+            self._drag_moved = False
+            self.moved_by_user.emit()
         super().mouseReleaseEvent(event)
+
+    def is_dragging(self) -> bool:
+        return self._dragging
 
 
 def create_app() -> QApplication:

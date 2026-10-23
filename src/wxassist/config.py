@@ -61,6 +61,7 @@ class UIConfig:
     always_on_top: bool = True
     opacity: float = 0.97
     auto_hide: bool = True  # 微信不在前台时自动收起悬浮窗
+    follow_wechat: bool = True  # 悬浮窗跟随微信窗口移动
 
 
 @dataclass

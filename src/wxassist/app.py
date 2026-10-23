@@ -86,6 +86,31 @@ def _force_show(dialog) -> None:
         pass
 
 
+def compute_overlay_position(
+    win_rect: tuple[int, int, int, int],
+    screen_rect: tuple[int, int, int, int],
+    size: tuple[int, int],
+    offset: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    """计算悬浮窗位置：默认贴在微信右侧（放不下就左侧），用户拖过后按相对偏移跟随。"""
+    left, top, right, bottom = win_rect
+    sx, sy, sr, sb = screen_rect
+    width, height = size
+    if offset is not None:
+        x = left + offset[0]
+        y = top + offset[1]
+    else:
+        x = right + 8
+        if x + width > sr:
+            x = left - width - 8
+        if x < sx:
+            x = sr - width - 8
+        y = max(sy + 8, min(top, sb - height - 8))
+    x = max(sx + 4, min(x, sr - width - 4))
+    y = max(sy + 4, min(y, sb - height - 4))
+    return x, y
+
+
 class AppController:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -106,6 +131,8 @@ class AppController:
         self._settings_dialog: SettingsDialog | None = None
         self._summary_dialog: SummaryDialog | None = None
         self._auto_settings_opened = False
+        self._follow_offset: tuple[int, int] | None = None
+        self._follow_timer: QTimer | None = None
         self.tray: QSystemTrayIcon | None = None
         self._tray_hint_shown = False
         self._tray_toggle: QAction | None = None
@@ -138,6 +165,7 @@ class AppController:
         self.overlay.context_requested.connect(self._on_context)
         self.overlay.load_more_requested.connect(self._on_load_more)
         self.overlay.pin_toggled.connect(self._on_pin_toggled)
+        self.overlay.moved_by_user.connect(self._on_overlay_moved)
         self.overlay.hidden_by_user.connect(self._on_hidden_by_user)
         self.bridge.context_updated.connect(self._on_context_updated)
 
@@ -179,6 +207,10 @@ class AppController:
         self._watch_timer.setInterval(1000)
         self._watch_timer.timeout.connect(self._watch_foreground)
         self._watch_timer.start()
+        self._follow_timer = QTimer(self.app)
+        self._follow_timer.setInterval(400)
+        self._follow_timer.timeout.connect(self._follow_tick)
+        self._follow_timer.start()
         code = self.app.exec()
         log.info("事件循环结束，退出码=%s", code)
         return code
@@ -195,12 +227,17 @@ class AppController:
         self._tray_pause = QAction("暂停采集", menu)
         self._tray_pause.setCheckable(True)
         self._tray_pause.toggled.connect(self._on_pause)
+        self._tray_follow = QAction("跟随微信窗口", menu)
+        self._tray_follow.setCheckable(True)
+        self._tray_follow.setChecked(bool(self.cfg.ui.follow_wechat))
+        self._tray_follow.toggled.connect(self._on_follow_toggled)
         settings = QAction("模型设置…", menu)
         settings.triggered.connect(self._open_settings)
         quit_action = QAction("退出", menu)
         quit_action.triggered.connect(self.app.quit)
         menu.addAction(self._tray_toggle)
         menu.addAction(self._tray_pause)
+        menu.addAction(self._tray_follow)
         menu.addSeparator()
         menu.addAction(settings)
         menu.addSeparator()
@@ -209,6 +246,16 @@ class AppController:
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         log.info("系统托盘图标已创建")
+
+    def _on_follow_toggled(self, follow: bool) -> None:
+        self.cfg.ui.follow_wechat = follow
+        if not follow:
+            self._follow_offset = None
+        self.overlay.set_status("ok", "已开启跟随微信窗口" if follow else "已关闭跟随，可自由拖动")
+        try:
+            self.cfg.save(Path(self.cfg.data_dir) / "config.json")
+        except Exception:
+            pass
 
     def _on_tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -534,23 +581,55 @@ class AppController:
         self._last_window = capture_mod.find_window()
         return self._last_window
 
+    def _screen_rect(self) -> tuple[int, int, int, int]:
+        screen = self.overlay.screen() or self.app.primaryScreen()
+        geo = screen.availableGeometry()
+        return geo.left(), geo.top(), geo.right(), geo.bottom()
+
     def _try_place_overlay(self) -> None:
         try:
             win = capture_mod.find_window()
         except Exception:
             return
-        left, top, right, bottom = win.client_bbox()
-        screen = self.overlay.screen() or self.app.primaryScreen()
-        geo = screen.availableGeometry()
-        width, height = self.overlay.width(), self.overlay.height()
-        x = right + 8
-        if x + width > geo.right():
-            x = left - width - 8
-        if x < geo.left():
-            x = geo.right() - width - 8
-        y = max(geo.top() + 8, min(top, geo.bottom() - height - 8))
+        x, y = compute_overlay_position(
+            win.client_bbox(),
+            self._screen_rect(),
+            (self.overlay.width(), self.overlay.height()),
+            self._follow_offset,
+        )
         self.overlay.move(x, y)
         self._placed = True
+
+    def _follow_tick(self) -> None:
+        """让悬浮窗跟着微信窗口移动。"""
+        if not self.cfg.ui.follow_wechat:
+            return
+        if not self.overlay.isVisible() or self.overlay.isMinimized():
+            return
+        if self.overlay.is_dragging():
+            return
+        try:
+            win = capture_mod.find_window()
+        except Exception:
+            return
+        x, y = compute_overlay_position(
+            win.client_bbox(),
+            self._screen_rect(),
+            (self.overlay.width(), self.overlay.height()),
+            self._follow_offset,
+        )
+        if (self.overlay.x(), self.overlay.y()) != (x, y):
+            self.overlay.move(x, y)
+
+    def _on_overlay_moved(self) -> None:
+        """用户拖动过悬浮窗后，记录相对微信窗口的偏移，继续跟随。"""
+        try:
+            win = capture_mod.find_window()
+            left, top, _right, _bottom = win.client_bbox()
+        except Exception:
+            return
+        self._follow_offset = (self.overlay.x() - left, self.overlay.y() - top)
+        log.info("悬浮窗跟随偏移更新：%s", self._follow_offset)
 
     def _toggle_overlay(self) -> None:
         self._manual_until = time.time() + 300
