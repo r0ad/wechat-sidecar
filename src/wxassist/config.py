@@ -19,13 +19,14 @@ def default_data_dir() -> Path:
 
 @dataclass
 class LLMConfig:
-    provider: str = "deepseek"  # deepseek | openai | ollama | mock
+    provider: str = "deepseek"  # deepseek | openai | dashscope | zhipu | siliconflow | ollama | custom
     base_url: str = "https://api.deepseek.com/v1"
     model: str = "deepseek-chat"
     api_key_env: str = "DEEPSEEK_API_KEY"
-    api_key: str = ""  # 可选：直接写在这里（不推荐，优先环境变量）
-    temperature: float = 0.7
-    timeout: int = 30
+    api_key: str = ""  # 一般不填，Key 存在 DPAPI 加密文件或环境变量里
+    temperature: float = 0.8
+    max_tokens: int = 700
+    timeout: int = 45
 
 
 @dataclass
@@ -41,6 +42,8 @@ class CaptureConfig:
     input_top_ratio: float = 0.86
     me_x_ratio: float = 0.62
     min_line_gap_px: int = 10
+    startup_warmup_sec: float = 2.0  # 启动后多久内不生成建议（等画面稳定）
+    analysis_debounce_sec: float = 1.5  # 连续多条消息合并成一次分析
 
 
 @dataclass
@@ -55,6 +58,7 @@ class UIConfig:
     hotkey: str = "ctrl+alt+j"
     always_on_top: bool = True
     opacity: float = 0.97
+    auto_hide: bool = True  # 微信不在前台时自动收起悬浮窗
 
 
 @dataclass
