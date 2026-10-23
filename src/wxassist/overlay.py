@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,11 +17,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .models import Analysis, Candidate
+from . import icons
 from .resources import app_icon
 
 ACCENT = "#07C160"
@@ -71,6 +73,25 @@ QPushButton#primary {{
 }}
 QPushButton#primary:hover {{ background: #0AD96F; }}
 QPushButton#ghost {{ background: transparent; border: 1px solid rgba(255,255,255,22); }}
+QPushButton[done="true"] {{
+    background: rgba(7, 193, 96, 60);
+    border: 1px solid rgba(7, 193, 96, 170);
+    color: #FFFFFF;
+}}
+QToolButton#iconButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+}}
+QToolButton#iconButton:hover {{
+    background: rgba(255, 255, 255, 28);
+    border-color: rgba(255, 255, 255, 24);
+}}
+QToolButton#iconButton:checked {{
+    background: rgba(7, 193, 96, 45);
+    border-color: rgba(7, 193, 96, 140);
+}}
+QToolButton#iconButton:pressed {{ background: rgba(255, 255, 255, 45); }}
 QPlainTextEdit {{
     background: rgba(0, 0, 0, 90); color: #9AA4B2; font-size: 10px;
     border: 1px solid rgba(255,255,255,14); border-radius: 8px;
@@ -121,6 +142,7 @@ class CandidateCard(QFrame):
     def __init__(self, candidate: Candidate, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.candidate = candidate
+        self.fill_done_text = "已填入"
         self.setObjectName("candidate")
         self.setProperty("recommended", "true" if candidate.selected else "false")
 
@@ -155,21 +177,50 @@ class CandidateCard(QFrame):
                 lambda _checked=False, k=key: self.refine_clicked.emit(self.text_label.text(), k)
             )
         refine_btn.setMenu(menu)
-        copy_btn = QPushButton("复制")
-        copy_btn.setObjectName("ghost")
-        copy_btn.clicked.connect(lambda: self.copy_clicked.emit(self.text_label.text()))
-        fill_btn = QPushButton("填入")
-        fill_btn.setObjectName("primary")
-        fill_btn.clicked.connect(lambda: self.fill_clicked.emit(self.text_label.text()))
+        self.copy_btn = QPushButton("复制")
+        self.copy_btn.setObjectName("ghost")
+        self.copy_btn.clicked.connect(self._on_copy_clicked)
+        self.fill_btn = QPushButton("填入")
+        self.fill_btn.setObjectName("primary")
+        self.fill_btn.clicked.connect(self._on_fill_clicked)
         actions.addWidget(refine_btn)
         actions.addStretch(1)
-        actions.addWidget(copy_btn)
-        actions.addWidget(fill_btn)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.fill_btn)
         layout.addLayout(actions)
 
     def set_text(self, text: str) -> None:
         self.candidate.text = text
         self.text_label.setText(text)
+
+    def _on_copy_clicked(self) -> None:
+        self.copy_clicked.emit(self.text_label.text())
+        _flash_button(self.copy_btn, "已复制")
+
+    def _on_fill_clicked(self) -> None:
+        self.fill_clicked.emit(self.text_label.text())
+        _flash_button(self.fill_btn, self.fill_done_text)
+
+
+def _flash_button(button: QPushButton, text: str) -> None:
+    if getattr(button, "_flashing", False):
+        return
+    button._flashing = True  # type: ignore[attr-defined]
+    original = button.text()
+    button.setText(text)
+    button.setProperty("done", "true")
+    style = button.style()
+    style.unpolish(button)
+    style.polish(button)
+
+    def restore() -> None:
+        button._flashing = False  # type: ignore[attr-defined]
+        button.setText(original)
+        button.setProperty("done", "false")
+        style.unpolish(button)
+        style.polish(button)
+
+    QTimer.singleShot(1600, restore)
 
 
 class Overlay(QWidget):
@@ -204,6 +255,7 @@ class Overlay(QWidget):
         self._paused = False
         self._cards: list[CandidateCard] = []
         self._model_ready = True
+        self._fill_mode = "copy"
         self._build_ui()
         self._place_default()
 
@@ -233,23 +285,15 @@ class Overlay(QWidget):
         self.session_label.setObjectName("session")
         header.addWidget(self.session_label)
         header.addStretch(1)
-        self.pin_btn = QPushButton("📌")
-        self.pin_btn.setObjectName("ghost")
+        self.pin_btn = self._icon_button(icons.icon("pin"), "常驻显示：不再自动隐藏")
         self.pin_btn.setCheckable(True)
-        self.pin_btn.setFixedSize(26, 22)
-        self.pin_btn.setToolTip("常驻显示：不再自动隐藏（再次点击恢复自动隐藏）")
+        self.pin_btn.toggled.connect(self._refresh_pin_icon)
         self.pin_btn.clicked.connect(self.pin_toggled.emit)
         header.addWidget(self.pin_btn)
-        self.settings_btn = QPushButton("⚙")
-        self.settings_btn.setObjectName("ghost")
-        self.settings_btn.setFixedSize(26, 22)
-        self.settings_btn.setToolTip("模型设置")
+        self.settings_btn = self._icon_button(icons.icon("settings"), "模型设置")
         self.settings_btn.clicked.connect(self.settings_requested.emit)
         header.addWidget(self.settings_btn)
-        hide_btn = QPushButton("—")
-        hide_btn.setObjectName("ghost")
-        hide_btn.setFixedSize(26, 22)
-        hide_btn.setToolTip("最小化到任务栏（也可用托盘图标或 Ctrl+Alt+J 恢复）")
+        hide_btn = self._icon_button(icons.icon("minimize"), "最小化到任务栏")
         hide_btn.clicked.connect(self._hide_self)
         header.addWidget(hide_btn)
         layout.addLayout(header)
@@ -370,6 +414,22 @@ class Overlay(QWidget):
         self.debug_panel.hide()
         layout.addWidget(self.debug_panel)
 
+    def _icon_button(self, icon, tooltip: str) -> QToolButton:
+        button = QToolButton()
+        button.setObjectName("iconButton")
+        button.setIcon(icon)
+        button.setIconSize(QSize(18, 18))
+        button.setFixedSize(30, 26)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        return button
+
+    def _refresh_pin_icon(self, pinned: bool) -> None:
+        self.pin_btn.setIcon(icons.icon("pin_on" if pinned else "pin", "#07C160" if pinned else "#D7DAE0"))
+        self.pin_btn.setToolTip(
+            "已常驻显示（点击恢复自动隐藏）" if pinned else "常驻显示：不再自动隐藏"
+        )
+
     def _place_default(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
@@ -407,6 +467,7 @@ class Overlay(QWidget):
 
         for candidate in analysis.candidates:
             card = CandidateCard(candidate)
+            card.fill_done_text = "已复制" if self._fill_mode == "copy" else "已填入"
             card.fill_clicked.connect(self.fill_requested.emit)
             card.copy_clicked.connect(self.copy_requested.emit)
             card.refine_clicked.connect(self.refine_requested.emit)
@@ -444,9 +505,7 @@ class Overlay(QWidget):
         self.pin_btn.blockSignals(True)
         self.pin_btn.setChecked(pinned)
         self.pin_btn.blockSignals(False)
-        self.pin_btn.setToolTip(
-            "已常驻显示（点击恢复自动隐藏）" if pinned else "常驻显示：不再自动隐藏"
-        )
+        self._refresh_pin_icon(pinned)
 
     def set_model_ready(self, ready: bool, hint: str = "") -> None:
         self._model_ready = ready
@@ -464,6 +523,11 @@ class Overlay(QWidget):
         self.empty_label.show()
         self.scroll.hide()
         self.status_label.setText("未配置模型 · 点 ⚙ 设置")
+
+    def set_fill_mode(self, mode: str) -> None:
+        self._fill_mode = "paste" if mode == "paste" else "copy"
+        for card in self._cards:
+            card.fill_done_text = "已填入" if self._fill_mode == "paste" else "已复制"
 
     def set_context_count(self, total: int) -> None:
         self.context_btn.setText(f"上下文 {total}")

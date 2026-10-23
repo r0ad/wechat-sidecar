@@ -151,6 +151,7 @@ class AppController:
             self.cfg.llm.model,
             "已配置" if self.llm.has_key() else "未配置",
         )
+        self.overlay.set_fill_mode(self.cfg.filler.mode)
         self.overlay.show()
         self._setup_tray()
         self.overlay.set_model_ready(self.llm.has_key())
