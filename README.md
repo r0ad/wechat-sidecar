@@ -274,6 +274,7 @@ python run.py --selftest --snapshot snapshots/calib.png --debug
 | 气泡识别成一片 | `--selftest --debug` 看 OCR 行坐标，调整 `chat_left_px/header_px/input_px` |
 | 点「填入」没反应 | 默认 `copy` 模式只写剪贴板，去微信 `Ctrl+V`；`--mode paste` 才会自动粘贴 |
 | 杀软报毒 | 程序无注入行为；可用 `--selftest` 验证，或自行从源码运行 |
+| 提示「已经在运行了」 | 同一时间只允许一个实例；先退出旧悬浮窗（点「退出」）再启动 |
 
 ## 开发与测试
 

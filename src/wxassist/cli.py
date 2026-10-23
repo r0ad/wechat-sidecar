@@ -69,6 +69,23 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
         cfg.ui.hotkey = args.hotkey
 
 
+_INSTANCE_MUTEX = None
+
+
+def ensure_single_instance() -> bool:
+    """同一时间只允许一个 wxassist 实例（避免多个悬浮窗/热键冲突）。"""
+    global _INSTANCE_MUTEX
+    try:
+        import ctypes
+
+        _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(
+            None, False, "wxassist-single-instance"
+        )
+        return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     cfg = Config.load(args.config)
@@ -90,6 +107,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.selftest:
         return run_selftest(cfg, args.snapshot, args.debug)
+
+    if not ensure_single_instance():
+        print("[!] wxassist 已经在运行了：请用任务栏/托盘里的悬浮窗，或先退出旧实例")
+        return 1
 
     from .app import AppController
 
