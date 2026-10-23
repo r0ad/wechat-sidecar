@@ -200,6 +200,7 @@ class AppController:
             self._on_context()
 
     def _on_load_more(self) -> None:
+        self._touch()
         session = self._session()
         if not session:
             self.overlay.set_status("wait", "还没有会话，先打开一个微信聊天")
@@ -229,6 +230,7 @@ class AppController:
             self._on_context()
 
     def _on_context(self) -> None:
+        self._touch()
         session = self._session()
         if not session:
             self.overlay.show_context([], 0)
@@ -246,6 +248,11 @@ class AppController:
         if not self.cfg.ui.auto_hide:
             return
         if time.time() < self._manual_until:
+            return
+        # 正在和悬浮窗交互（打开菜单/点按钮）时不要收起
+        if QApplication.activePopupWidget() is not None:
+            return
+        if self.overlay.isActiveWindow():
             return
         dialogs_open = any(
             dialog is not None and dialog.isVisible()
@@ -268,7 +275,12 @@ class AppController:
 
     # ---------- 用户操作 ----------
 
+    def _touch(self) -> None:
+        """用户和悬浮窗交互后，5 分钟内不自动收起。"""
+        self._manual_until = time.time() + 300
+
     def _on_fill(self, text: str) -> None:
+        self._touch()
         try:
             win = self._find_window()
             action = fill_text(
@@ -290,6 +302,7 @@ class AppController:
             self.overlay.set_status("error", f"填入失败：{exc}")
 
     def _on_copy(self, text: str) -> None:
+        self._touch()
         try:
             copy_to_clipboard(text)
             self.overlay.set_status("ok", "已复制到剪贴板")
@@ -297,6 +310,7 @@ class AppController:
             self.overlay.set_status("error", f"复制失败：{exc}")
 
     def _on_regenerate(self) -> None:
+        self._touch()
         if self.pipeline is None:
             return
         avoid = [c.text for c in self._last_analysis.candidates] if self._last_analysis else []
@@ -359,6 +373,7 @@ class AppController:
         QMessageBox.information(None, "说话风格画像", profile)
 
     def _on_refine(self, original: str, style: str) -> None:
+        self._touch()
         session = self._session()
         if not session:
             self.overlay.set_status("wait", "还没有会话")
@@ -382,6 +397,7 @@ class AppController:
     # ---------- 模型设置 ----------
 
     def _open_settings(self) -> None:
+        self._touch()
         log.info("打开模型设置")
         self._auto_settings_opened = True
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
@@ -457,7 +473,7 @@ class AppController:
         self._placed = True
 
     def _toggle_overlay(self) -> None:
-        self._manual_until = time.time() + 120
+        self._manual_until = time.time() + 300
         if self.overlay.isVisible():
             self.overlay.hide()
             self._hidden_by_auto = False

@@ -74,6 +74,25 @@ QPlainTextEdit {{
     background: rgba(0, 0, 0, 90); color: #9AA4B2; font-size: 10px;
     border: 1px solid rgba(255,255,255,14); border-radius: 8px;
 }}
+QMenu {{
+    background-color: #202632;
+    color: #E6E8EB;
+    border: 1px solid rgba(255,255,255,38);
+    border-radius: 8px;
+    padding: 4px;
+}}
+QMenu::item {{
+    color: #E6E8EB;
+    background: transparent;
+    padding: 6px 20px;
+    border-radius: 5px;
+    font-size: 12px;
+}}
+QMenu::item:selected {{
+    background-color: #2C3442;
+    color: #FFFFFF;
+}}
+QMenu::item:disabled {{ color: #6F7885; }}
 QScrollArea {{ background: transparent; border: none; }}
 """
 
