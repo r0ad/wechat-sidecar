@@ -289,6 +289,7 @@ python run.py --selftest --snapshot snapshots/calib.png --debug
 | 点「填入」没反应 | 默认 `copy` 模式只写剪贴板，去微信 `Ctrl+V`；`--mode paste` 才会自动粘贴 |
 | 杀软报毒 | 程序无注入行为；可用 `--selftest` 验证，或自行从源码运行 |
 | `ImportError: DLL load failed while importing QtCore` | 常见于 Anaconda 的 Python：用 python.org 的 Python 重新 `python -m venv .venv`，再 `pip install -r requirements.txt` |
+| venv 里 `python.exe` 是 Python Launcher（启动会多一个子进程/环境不对） | 用 base 安装目录的 `python.exe` 覆盖 `.venv\Scripts\python.exe`（103KB 左右的那个），或删掉 `.venv` 重建 |
 | 提示「已经在运行了」 | 同一时间只允许一个实例；先退出旧悬浮窗（点「退出」）再启动 |
 
 ## 开发与测试
