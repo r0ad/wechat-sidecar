@@ -1,0 +1,32 @@
+{
+  "llm": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "temperature": 0.7,
+    "timeout": 30
+  },
+  "capture": {
+    "interval_ms": 700,
+    "chat_left_ratio": 0.26,
+    "header_bottom_ratio": 0.10,
+    "input_top_ratio": 0.86,
+    "me_x_ratio": 0.62,
+    "min_line_gap_px": 10
+  },
+  "privacy": {
+    "redact_before_send": true,
+    "max_context_messages": 20,
+    "store_screenshots": false
+  },
+  "ui": {
+    "hotkey": "ctrl+alt+j",
+    "always_on_top": true,
+    "opacity": 0.97
+  },
+  "filler": {
+    "mode": "copy",
+    "paste_without_enter": true
+  }
+}

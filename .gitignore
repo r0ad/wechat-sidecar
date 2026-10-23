@@ -1,0 +1,30 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# --- Tooling ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# --- 本项目运行时数据（含聊天内容，绝不入库）---
+config.local.json
+*.local.json
+snapshots/
+*.log
+.env
+data/
