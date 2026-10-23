@@ -69,19 +69,26 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
         cfg.ui.hotkey = args.hotkey
 
 
-_INSTANCE_MUTEX = None
+_LOCK_FILE = None
 
 
-def ensure_single_instance() -> bool:
-    """同一时间只允许一个 wxassist 实例（避免多个悬浮窗/热键冲突）。"""
-    global _INSTANCE_MUTEX
+def ensure_single_instance(lock_dir: str) -> bool:
+    """同一时间只允许一个 wxassist 实例（用文件锁，跨进程可靠）。"""
+    global _LOCK_FILE
     try:
-        import ctypes
+        import msvcrt
+        from pathlib import Path
 
-        _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(
-            None, False, "wxassist-single-instance"
-        )
-        return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+        path = Path(lock_dir) / "wxassist.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a+")
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            handle.close()
+            return False
+        _LOCK_FILE = handle  # 进程存活期间一直持有
+        return True
     except Exception:
         return True
 
@@ -108,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         return run_selftest(cfg, args.snapshot, args.debug)
 
-    if not ensure_single_instance():
+    if not ensure_single_instance(cfg.data_dir):
         print("[!] wxassist 已经在运行了：请用任务栏/托盘里的悬浮窗，或先退出旧实例")
         return 1
 
