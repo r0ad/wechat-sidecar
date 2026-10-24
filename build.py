@@ -25,6 +25,22 @@ ROOT = Path(__file__).resolve().parent
 SPEC = ROOT / "wxassist.spec"
 
 
+def _safe_console() -> None:
+    """CI 的 Windows 控制台可能是 cp1252，中文 print 会抛 UnicodeEncodeError。
+
+    保留当前编码（本地中文控制台不受影响），只把错误处理改成 replace，保证不再崩。
+    工作流里还会额外设置 PYTHONIOENCODING=utf-8，日志里的中文就是正常的。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
+_safe_console()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="把 wxassist 打包成 Windows exe")
     parser.add_argument("--onefile", action="store_true", help="打包成单文件 exe（默认目录版）")

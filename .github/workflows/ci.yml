@@ -15,6 +15,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Windows runner 默认 cp1252，中文日志会编码失败；统一走 UTF-8
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
 defaults:
   run:
     shell: pwsh
