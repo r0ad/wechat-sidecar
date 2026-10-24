@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  test:
+    name: 测试（Windows / Python 3.11）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: 跑单元测试
+        run: python -m pytest -q
+
+  build:
+    name: 打包单文件 exe
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: PyInstaller 打包
+        run: python build.py --onefile
+
+      - name: 生成校验和
+        run: |
+          $hash = (Get-FileHash "dist/wxassist-onefile.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  wxassist-onefile.exe" | Set-Content -Path "dist/wxassist-onefile.exe.sha256" -Encoding ascii
+          Get-Content "dist/wxassist-onefile.exe.sha256"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wxassist-onefile
+          path: |
+            dist/wxassist-onefile.exe
+            dist/wxassist-onefile.exe.sha256
+          retention-days: 14
+
+  release:
+    name: 发布 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: wxassist-onefile
+
+      - name: 创建 / 更新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            wxassist-onefile.exe
+            wxassist-onefile.exe.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true

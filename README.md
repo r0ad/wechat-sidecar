@@ -1,5 +1,6 @@
 # 微信副驾 · WeChat Sidecar
 
+[![CI](https://github.com/r0ad/wechat-sidecar/actions/workflows/ci.yml/badge.svg)](https://github.com/r0ad/wechat-sidecar/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Python](https://img.shields.io/badge/python-3.10--3.12-3776AB)
 ![License](https://img.shields.io/badge/license-MIT-2ea44f)
@@ -373,6 +374,10 @@ python -m pytest -q          # 全部测试（当前 128 个）
 测试不依赖真实微信窗口、不调用外部 API：
 气泡解析用合成图；大模型用**本地 HTTP 桩服务**验证 OpenAI 兼容请求的真实收发；
 单测里的 Mock 模型只存在于测试代码，产品界面不提供模拟数据。
+
+**GitHub Actions**（`.github/workflows/ci.yml`）：每次 push / PR 在 Windows 上跑一遍测试；
+push 到主分支会产出 exe 构建产物；打 `v*` tag 时自动打包单文件 exe 并创建 GitHub Release
+（附 SHA256 校验和）。
 
 > 完整的 agent 开发规范（硬约束、架构、提交流程、已知坑、验收清单）见
 > [AGENTS.md](AGENTS.md)。
