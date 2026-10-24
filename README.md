@@ -358,7 +358,7 @@ python build.py --console       # 保留控制台窗口，排查启动问题
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q          # 全部测试（当前 96 个）
+python -m pytest -q          # 全部测试（当前 128 个）
 ```
 
 测试不依赖真实微信窗口、不调用外部 API：
