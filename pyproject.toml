@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wxassist"
-version = "0.1.1"
+version = "0.1.2"
 description = "微信副驾（WeChat Sidecar）：旁挂式微信 AI 回复助手，截屏 + 本地 OCR + 候选回复建议，永不自动发送"
 requires-python = ">=3.10"
 dependencies = [
