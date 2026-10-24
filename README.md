@@ -354,12 +354,15 @@ python build.py --console       # 保留控制台窗口，排查启动问题
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q          # 70 个测试
+python -m pytest -q          # 全部测试（当前 96 个）
 ```
 
 测试不依赖真实微信窗口、不调用外部 API：
 气泡解析用合成图；大模型用**本地 HTTP 桩服务**验证 OpenAI 兼容请求的真实收发；
 单测里的 Mock 模型只存在于测试代码，产品界面不提供模拟数据。
+
+> 完整的 agent 开发规范（硬约束、架构、提交流程、已知坑、验收清单）见
+> [AGENTS.md](AGENTS.md)。
 
 ```
 src/wxassist/     # 主程序
