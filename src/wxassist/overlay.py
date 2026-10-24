@@ -454,6 +454,8 @@ class Overlay(QWidget):
 
     def set_session(self, session: str) -> None:
         self.session_label.setText(session or "")
+        if not self._cards:
+            self.regenerate_btn.setText("生成候选")
 
     def show_analysis(self, analysis: Analysis) -> None:
         self.set_session(analysis.session)
@@ -468,6 +470,7 @@ class Overlay(QWidget):
         self._clear_candidates()
 
         if analysis.error:
+            self.regenerate_btn.setText("生成候选")
             self.empty_label.setText(f"生成失败：{analysis.error}")
             self.empty_label.show()
             self.scroll.hide()
@@ -481,6 +484,7 @@ class Overlay(QWidget):
             card.refine_clicked.connect(self.refine_requested.emit)
             self._cards.append(card)
             self.candidates_layout.insertWidget(self.candidates_layout.count() - 1, card)
+        self.regenerate_btn.setText("换一批")
         self.empty_label.hide()
         self.scroll.show()
         source = analysis.provider or "model"

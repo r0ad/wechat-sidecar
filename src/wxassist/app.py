@@ -21,6 +21,7 @@ from .llm import LLMClient
 from .models import Analysis, Message, SessionSummary
 from .overlay import Overlay, create_app
 from .pipeline import Pipeline
+from .persona import apply_style_section, load_persona, save_persona
 from .resources import app_icon
 from .secrets_store import save_api_key
 from .settings_dialog import SettingsDialog
@@ -133,6 +134,8 @@ class AppController:
         self._auto_settings_opened = False
         self._follow_offset: tuple[int, int] | None = None
         self._follow_timer: QTimer | None = None
+        self._proactive_done: set[str] = set()
+        self._last_analysis_ts = 0.0
         self.tray: QSystemTrayIcon | None = None
         self._tray_hint_shown = False
         self._tray_toggle: QAction | None = None
@@ -298,6 +301,7 @@ class AppController:
 
     def _on_analysis(self, analysis: Analysis) -> None:
         self._last_analysis = analysis
+        self._last_analysis_ts = time.time()
         if analysis.ok:
             self.overlay.set_model_ready(True)
         elif analysis.error and ("配置模型" in analysis.error or "API Key" in analysis.error):
@@ -343,6 +347,27 @@ class AppController:
     def _on_session_changed(self, session: str) -> None:
         self.overlay.set_session(session)
         self.overlay.set_context_count(self.store.count_messages(session))
+        if self.cfg.ui.auto_proactive and session:
+            QTimer.singleShot(2000, lambda: self._run_proactive(session))
+
+    def _run_proactive(self, session: str) -> None:
+        """切到新会话后，即使没有新消息，也基于当前对话主动生成一次候选。"""
+        if not self.cfg.ui.auto_proactive or self.pipeline is None:
+            return
+        if session != self._session():
+            return
+        if session in self._proactive_done:
+            return
+        if self._last_analysis_ts and time.time() - self._last_analysis_ts < 8:
+            self._proactive_done.add(session)
+            return
+        self._proactive_done.add(session)
+        log.info("主动生成候选：%s", session)
+        threading.Thread(
+            target=self.pipeline.analyze_now,
+            args=(session, None, True),
+            daemon=True,
+        ).start()
 
     def _on_context(self) -> None:
         self._touch()
@@ -500,8 +525,21 @@ class AppController:
         if error:
             self.overlay.set_status("error", error)
             return
-        self.overlay.set_status("ok", "已学会你的说话风格，后续候选会模仿它")
-        QMessageBox.information(None, "说话风格画像", profile)
+        try:
+            text = load_persona(self.cfg.data_dir)
+            save_persona(self.cfg.data_dir, apply_style_section(text, profile))
+            if self._settings_dialog is not None and getattr(
+                self._settings_dialog, "persona_widget", None
+            ) is not None:
+                self._settings_dialog.persona_widget.reload()
+        except Exception as exc:
+            log.warning("写入个性化提示词失败：%s", exc)
+        self.overlay.set_status("ok", "已学会你的说话风格，并写入 设置 → 个性化")
+        QMessageBox.information(
+            None,
+            "说话风格画像",
+            profile + "\n\n已自动写入 设置 → 个性化（AUTO-STYLE 区块），可编辑、可导出迁移。",
+        )
 
     def _on_refine(self, original: str, style: str) -> None:
         self._touch()

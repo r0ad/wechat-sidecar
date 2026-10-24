@@ -68,9 +68,11 @@ def test_analyze_success(monkeypatch) -> None:
 
 def test_analyze_requires_incoming(monkeypatch) -> None:
     engine = SuggestEngine(FakeLLM(), make_cfg(monkeypatch))  # type: ignore[arg-type]
-    analysis = engine.analyze("Alice", history(), [])
+    # 最后一条是我自己发的，且没有待回复消息
+    messages = [history()[0], history()[1]]
+    analysis = engine.analyze("Alice", messages, [])
     assert not analysis.ok
-    assert "没有对方的新消息" in analysis.error
+    assert "没有可回复的消息" in analysis.error
 
 
 def test_analyze_without_key_reports_error(monkeypatch) -> None:

@@ -23,6 +23,10 @@
     "load_more_pages": 3,
     "require_send_button": true
   },
+  "persona": {
+    "enabled": true,
+    "max_chars": 5000
+  },
   "memory": {
     "enabled": true,
     "max_chars": 200000
@@ -37,7 +41,8 @@
     "always_on_top": true,
     "opacity": 0.97,
     "auto_hide": true,
-    "follow_wechat": true
+    "follow_wechat": true,
+    "auto_proactive": true
   },
   "filler": {
     "mode": "copy",

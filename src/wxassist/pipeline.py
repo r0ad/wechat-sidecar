@@ -108,18 +108,24 @@ class Pipeline:
     def paused(self) -> bool:
         return self._paused.is_set()
 
-    def analyze_now(self, session: str | None = None, avoid: list[str] | None = None) -> None:
-        """手动换一批：用最近的上下文再分析一次，可传入要避开的旧候选。"""
+    def analyze_now(
+        self,
+        session: str | None = None,
+        avoid: list[str] | None = None,
+        proactive: bool = True,
+    ) -> None:
+        """手动生成/换一批：没有新消息时也可以基于当前对话主动生成。"""
         session = session or self._session
         if not session:
             self._status("wait", "还没有会话，先打开一个微信聊天")
             return
         history = self.store.recent_messages(session, self.cfg.privacy.max_context_messages)
-        incoming = [m for m in history if not m.is_me][-1:]
-        if not incoming:
-            self._status("wait", "没有可分析的对方消息")
+        if not history:
+            self._status("wait", "还没有读到上下文，先打开聊天停留几秒")
             return
-        self._emit_analysis(session, history, incoming, avoid=avoid)
+        incoming = [m for m in history if not m.is_me][-1:]
+        self._status("thinking", f"正在生成候选 · {session}")
+        self._emit_analysis(session, history, incoming, avoid=avoid, allow_proactive=proactive)
 
     # ---------- 主循环 ----------
 
@@ -458,8 +464,11 @@ class Pipeline:
         history: list[Message],
         incoming: list[Message],
         avoid: list[str] | None = None,
+        allow_proactive: bool = False,
     ) -> None:
-        analysis: Analysis = self.engine.analyze(session, history, incoming, avoid=avoid)
+        analysis: Analysis = self.engine.analyze(
+            session, history, incoming, avoid=avoid, allow_proactive=allow_proactive
+        )
         if analysis.ok:
             self._status("ok", f"监听中 · {session}")
         elif analysis.error:

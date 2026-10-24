@@ -63,12 +63,19 @@ class MemoryConfig:
 
 
 @dataclass
+class PersonaConfig:
+    enabled: bool = True
+    max_chars: int = 5000
+
+
+@dataclass
 class UIConfig:
     hotkey: str = "ctrl+alt+j"
     always_on_top: bool = True
     opacity: float = 0.97
     auto_hide: bool = True  # 微信不在前台时自动收起悬浮窗
     follow_wechat: bool = True  # 悬浮窗跟随微信窗口移动
+    auto_proactive: bool = True  # 切到新会话且没有新消息时，自动基于当前对话生成候选
 
 
 @dataclass
@@ -83,6 +90,7 @@ class Config:
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    persona: PersonaConfig = field(default_factory=PersonaConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     filler: FillerConfig = field(default_factory=FillerConfig)
     data_dir: str = ""
@@ -113,7 +121,7 @@ class Config:
         self.merge_dict(raw)
 
     def merge_dict(self, raw: dict[str, Any]) -> None:
-        for section in ("llm", "capture", "privacy", "ui", "filler", "memory"):
+        for section in ("llm", "capture", "privacy", "ui", "filler", "memory", "persona"):
             values = raw.get(section)
             if not isinstance(values, dict):
                 continue

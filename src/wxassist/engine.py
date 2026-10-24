@@ -11,6 +11,7 @@ from .config import Config
 from .json_utils import extract_json
 from .llm import LLMClient, LLMError
 from .memory import build_block, load_memory
+from .persona import build_block as build_persona_block, load_persona
 from .models import Analysis, Candidate, Message, SessionSummary
 from .privacy import redact_messages, sensitive_topics
 from .prompts import (
@@ -54,22 +55,30 @@ class SuggestEngine:
         history: list[Message],
         incoming: list[Message],
         avoid: list[str] | None = None,
+        allow_proactive: bool = False,
     ) -> Analysis:
         started = time.perf_counter()
         analysis = Analysis(session=session, incoming=list(incoming))
         analysis.provider = self.cfg.llm.provider
         analysis.model = self.cfg.llm.model
 
-        if not incoming:
-            analysis.error = "没有对方的新消息"
-            analysis.latency_ms = _ms(started)
-            return analysis
-
         context = history[-max(1, self.cfg.privacy.max_context_messages) :]
         analysis.context_count = len(context)
         if self.cfg.privacy.redact_before_send:
             context = redact_messages(context)
-        pending = unanswered_messages(context) or list(incoming)
+
+        pending = unanswered_messages(context)
+        proactive = False
+        if not pending:
+            if allow_proactive:
+                proactive = True
+                pending = [message for message in context if not message.is_me][-1:]
+            elif incoming:
+                pending = list(incoming)
+            else:
+                analysis.error = "没有可回复的消息"
+                analysis.latency_ms = _ms(started)
+                return analysis
         analysis.incoming = pending
         history_text = format_history(context)
 
@@ -79,17 +88,25 @@ class SuggestEngine:
             if raw_memory.strip():
                 memory_text = build_block(raw_memory, self.cfg.memory.max_chars)
                 analysis.memory_chars = len(memory_text)
+
+        persona_text = ""
+        if self.cfg.persona.enabled:
+            raw_persona = load_persona(self.cfg.data_dir)
+            if raw_persona.strip():
+                persona_text = build_persona_block(raw_persona, self.cfg.persona.max_chars)
         relationship = session
         style_profile = self.store.get_style_profile(session) if self.store else ""
 
-        try:
-            intent, tokens_in, tokens_out = self._intent(history_text, relationship)
-        except LLMError as exc:
-            analysis.error = str(exc)
-            analysis.latency_ms = _ms(started)
-            return analysis
-        analysis.tokens_in += tokens_in
-        analysis.tokens_out += tokens_out
+        intent: dict = {}
+        if not proactive:
+            try:
+                intent, tokens_in, tokens_out = self._intent(history_text, relationship)
+            except LLMError as exc:
+                analysis.error = str(exc)
+                analysis.latency_ms = _ms(started)
+                return analysis
+            analysis.tokens_in += tokens_in
+            analysis.tokens_out += tokens_out
 
         style = self.store.my_recent_messages(session, 8) if self.store else []
         draft_user = build_draft_user(
@@ -101,6 +118,8 @@ class SuggestEngine:
             avoid=avoid,
             unanswered=[message.text for message in pending],
             memory_text=memory_text,
+            persona_text=persona_text,
+            proactive=proactive,
         )
         try:
             draft, tokens = self._chat_json(DRAFT_SYSTEM, draft_user, max_tokens=800)

@@ -163,6 +163,11 @@ class SettingsDialog(QDialog):
 
         self.memory_widget = MemoryWidget(self.cfg, self.cfg.data_dir)
         self.tabs.addTab(self.memory_widget, "长期记忆")
+
+        from .persona_widget import PersonaWidget
+
+        self.persona_widget = PersonaWidget(self.cfg, self.cfg.data_dir)
+        self.tabs.addTab(self.persona_widget, "个性化")
         layout.addWidget(self.tabs, 1)
 
         buttons = QHBoxLayout()
