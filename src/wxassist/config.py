@@ -46,6 +46,7 @@ class CaptureConfig:
     analysis_debounce_sec: float = 1.5  # 连续多条消息合并成一次分析
     load_more_pages: int = 3  # 「读取更多」向上翻几屏
     require_send_button: bool = True  # 只在聊天页（底部有「发送」）读取，避免把文章/小程序当聊天
+    filter_garbled: bool = True  # 过滤图片/表情里读出来的乱码，别当成对方消息
 
 
 @dataclass

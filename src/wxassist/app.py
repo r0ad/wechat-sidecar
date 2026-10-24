@@ -183,6 +183,9 @@ class AppController:
             self.cfg.llm.model,
             "已配置" if self.llm.has_key() else "未配置",
         )
+        purged = self.store.purge_garbled_messages()
+        if purged:
+            log.info("已清理 %s 条 OCR 乱码记录（图片里的文字被误读，不是真实消息）", purged)
         self.overlay.set_fill_mode(self.cfg.filler.mode)
         self.overlay.show()
         self._setup_tray()

@@ -116,6 +116,7 @@ python build.py --console             # 仅排查启动问题时用
 |---|---|
 | `capture.py` | 找微信窗口、WGC/GDI 采集、DPI、遮挡检测 |
 | `layout.py` | 面板区域、自适应气泡检测、群聊发言人、时间/系统消息过滤 |
+| `text_quality.py` | OCR 文本可信度：过滤图片/表情里读出来的乱码（含老库清理） |
 | `ocr.py` | RapidOCR 封装（懒加载/预热/只识别面板） |
 | `tracker.py` | 跨帧锚点对齐、多重集兜底、会话切换 |
 | `engine.py` | 意图/起草/换一批/改写/总结/学风格/主动生成 |
@@ -161,6 +162,10 @@ python build.py --console             # 仅排查启动问题时用
   1. 气泡上方独立短行；
   2. 被并进气泡的第一行短名字（`_split_leading_sender`，要求比正文行左且更矮）；
 - 时间分隔符支持 `9月21日 15:05` 这类格式，必须过滤，不能当消息。
+- 图片/表情里的字太小，OCR 会读成 `TE088n m877a` 这类乱码；`text_quality.looks_like_garbled`
+  负责逐行 + 逐气泡过滤，禁止把乱码当消息写进上下文。判断必须保守：含中文（≥15%）一律放行，
+  URL/邮箱/英文短句不能误杀；宁可漏掉可疑拉丁串，也不要丢真实消息。
+- 老库里已存进去的乱码由 `Store.purge_garbled_messages()` 在启动时清掉（只删乱码，日志只记条数）。
 
 ### 4.2 稳定性
 
@@ -218,6 +223,7 @@ python build.py --console             # 仅排查启动问题时用
 | 文件 | 覆盖 |
 |---|---|
 | `tests/test_layout.py` | 气泡、群聊发言人、时间过滤、区域 |
+| `tests/test_text_quality.py` | OCR 乱码识别（图片文字）、URL/英文/中文不误杀 |
 | `tests/test_tracker.py` | 跨帧去重、会话切换、sender |
 | `tests/test_config_models.py` | 配置合并、模型校验 |
 | `tests/test_privacy_json.py` | 脱敏、JSON 容错 |
@@ -247,6 +253,9 @@ python build.py --console             # 仅排查启动问题时用
 8. **`--demo`/`--screenshot` 已删除**：不要根据旧文档加回来。
 9. **长期记忆不要加检索**：用户明确要求整段注入；RAG 只在用户再次提出时讨论。
 10. **`ui.auto_hide` / `follow_wechat` / `auto_proactive`** 都有用户预期行为，改动前想清楚。
+11. **图片里的字会 OCR 成乱码**：图片缩略图里的文字只有几像素高，RapidOCR 会输出
+    `TE088n m877a` 这种随机拉丁串，还会被当成对方消息发给模型。已用 `text_quality` 过滤；
+    不要为了「多读点内容」把图片文字重新当消息，也不要把置信度门槛调到会误杀真实消息。
 
 ---
 
@@ -257,6 +266,8 @@ python build.py --console             # 仅排查启动问题时用
 - 多问题综合：以「我最后一条消息之后对方所有未回复消息」为回复目标，必答要点写进提示词；
 - 无新消息时：切会话 2 秒后自动生成一次候选（`ui.auto_proactive`），按钮显示「生成候选」；
 - 群聊：发言人识别 + `名字：内容` 上下文 + 覆盖多人问题；
+- 图片/表情消息：图里的文字会被 OCR 读成乱码，自动过滤，不进上下文、不显示成对方消息；
+  启动时清掉老库里的存量乱码（`capture.filter_garbled` 可关闭，默认开）；
 - 界面：最新消息限高可滚动、候选按钮完整、双击复制、复制高亮；
 - 悬浮窗：跟随微信、自动隐藏/📌常驻、托盘、最小化到任务栏、单实例；
 - 打包：默认 windowed、目录版；单文件产物叫 `wxassist-onefile.exe`。

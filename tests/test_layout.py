@@ -10,8 +10,8 @@ from wxassist.layout import BubbleParser, is_group_name
 from wxassist.models import OcrLine
 
 
-def make_line(text: str, x0: int, y0: int, x1: int, y1: int) -> OcrLine:
-    return OcrLine(text=text, score=0.99, x0=x0, y0=y0, x1=x1, y1=y1)
+def make_line(text: str, x0: int, y0: int, x1: int, y1: int, score: float = 0.99) -> OcrLine:
+    return OcrLine(text=text, score=score, x0=x0, y0=y0, x1=x1, y1=y1)
 
 
 def blank_image(width: int = 800, height: int = 600, color=(245, 245, 245)) -> np.ndarray:
@@ -153,3 +153,72 @@ def test_split_leading_sender() -> None:
     wrapped_second = make_line("过节", 360, 391, 400, 409)
     sender2, _ = parser._split_leading_sender([wrapped_first, wrapped_second])
     assert sender2 == ""
+
+
+# ---------- 图片消息乱码（真实故障：图里的字被 OCR 读成 "TE088n m877a"） ----------
+
+
+def test_image_garbled_text_is_dropped() -> None:
+    cfg = CaptureConfig()
+    img = blank_image()
+    # 真实文字气泡
+    cv2.rectangle(img, (215, 210), (455, 250), (255, 255, 255), -1)
+    # 图片消息缩略图：里面只有几个像素高的字，OCR 读出来是乱码
+    cv2.rectangle(img, (215, 300), (455, 470), (255, 255, 255), -1)
+    lines = [
+        make_line("合并相似的问题", 230, 218, 430, 242),
+        make_line("TE088n m877a, e38i8nM", 230, 312, 430, 330, score=0.55),
+        make_line("HEERA8", 230, 340, 300, 356, score=0.56),
+        make_line("ORFRA.", 230, 365, 300, 381, score=0.60),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert [b.text for b in result.bubbles] == ["合并相似的问题"]
+    assert [b.is_me for b in result.bubbles] == [False]
+
+
+def test_garbled_bubble_dropped_even_with_high_scores() -> None:
+    """每行只有一个机器串时行级过滤会漏，合并成气泡后要再判一次。"""
+    cfg = CaptureConfig()
+    img = blank_image()
+    cv2.rectangle(img, (215, 300), (455, 380), (255, 255, 255), -1)
+    lines = [
+        make_line("TE088n", 230, 312, 330, 332, score=0.99),
+        make_line("m877a", 230, 344, 330, 364, score=0.99),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert result.bubbles == []
+
+
+def test_confident_latin_messages_are_kept() -> None:
+    cfg = CaptureConfig()
+    img = blank_image()
+    cv2.rectangle(img, (215, 300), (455, 350), (255, 255, 255), -1)
+    lines = [
+        make_line("OK", 230, 310, 300, 332),
+        make_line("5pm", 230, 336, 310, 348),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert [b.text for b in result.bubbles] == ["OK\n5pm"]
+
+
+def test_low_confidence_chinese_message_is_kept() -> None:
+    cfg = CaptureConfig()
+    img = blank_image()
+    cv2.rectangle(img, (215, 300), (455, 350), (255, 255, 255), -1)
+    lines = [make_line("好的", 230, 312, 300, 336, score=0.52)]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert [b.text for b in result.bubbles] == ["好的"]
+
+
+def test_garbled_filter_can_be_disabled() -> None:
+    cfg = CaptureConfig()
+    cfg.filter_garbled = False
+    img = blank_image()
+    cv2.rectangle(img, (215, 300), (455, 380), (255, 255, 255), -1)
+    lines = [
+        make_line("TE088n m877a, e38i8nM", 230, 312, 430, 330, score=0.55),
+        make_line("HEERA8", 230, 344, 300, 360, score=0.56),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert len(result.bubbles) == 1
+    assert "TE088n" in result.bubbles[0].text

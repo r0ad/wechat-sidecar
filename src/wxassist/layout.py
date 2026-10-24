@@ -15,6 +15,7 @@ import numpy as np
 
 from .config import CaptureConfig
 from .models import Bubble, OcrLine
+from .text_quality import looks_like_garbled
 
 TIME_SEPARATOR = re.compile(
     r"^(?:(?:昨天|今天|前天|星期[一二三四五六日天]|周[一二三四五六日天])\s*)?"
@@ -131,6 +132,9 @@ class BubbleParser:
             if header_bottom <= ln.cy <= input_top and ln.x0 >= chat_left - 4
         ]
         body = [ln for ln in body if not self._is_noise(ln.text)]
+        # 图片/表情里的字太小，OCR 会读成 "TE088n m877a" 这类乱码：
+        # 必须整行丢掉，否则会被当成对方的原话发进模型
+        body = [ln for ln in body if not self._is_garbled(ln.text, ln.score)]
         if not body:
             return ParseResult(session=session, bubbles=[], dropped=len(lines))
 
@@ -160,6 +164,9 @@ class BubbleParser:
                     ln_list = remaining
             text = self._join_lines(ln_list)
             if not text:
+                continue
+            # 逐行过滤后仍可能漏网（每行只有一个机器串），合并后再判一次
+            if self._is_garbled(text, _mean_score(ln_list)):
                 continue
             if box is not None:
                 is_me = box.is_me
@@ -388,12 +395,24 @@ class BubbleParser:
             return True
         return any(hint in t for hint in SYSTEM_HINTS)
 
+    def _is_garbled(self, text: str, score: float | None = None) -> bool:
+        """图片/表情里被硬读出来的乱码：不能当聊天内容。"""
+        if not self.cfg.filter_garbled:
+            return False
+        return looks_like_garbled(text, score)
+
     @staticmethod
     def _join_lines(lines: list[OcrLine]) -> str:
         ordered = sorted(lines, key=lambda ln: (ln.y0, ln.x0))
         parts = [ln.text.strip() for ln in ordered if ln.text.strip()]
         text = "\n".join(parts)
         return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _mean_score(lines: list[OcrLine]) -> float:
+    if not lines:
+        return 1.0
+    return sum(line.score for line in lines) / len(lines)
 
 
 def _overlap_ratio(a: BubbleBox, b: BubbleBox) -> float:

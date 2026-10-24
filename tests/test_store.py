@@ -74,3 +74,30 @@ def test_seq_ordering_with_older_context(tmp_path) -> None:
     assert [m.text for m in store.recent_messages("A", 10)] == ["旧1", "旧2", "新1", "新2"]
     assert store.count_messages("A") == 4
     store.close()
+
+
+def test_purge_garbled_messages_keeps_real_text(tmp_path) -> None:
+    """老库里图片乱码的存量记录要能清掉，真实消息（含 URL）不能动。"""
+    store = Store(tmp_path / "t.db")
+    store.add_messages(
+        [
+            Message(session="A", text="合并相似的问题", is_me=False, ts=1),
+            Message(session="A", text="https://r0ad.host/", is_me=True, ts=2),
+            Message(session="A", text="OK", is_me=False, ts=3),
+            Message(
+                session="A",
+                text="TE088n m877a, e38i8nM\nHEERA8\nORFRA.",
+                is_me=False,
+                ts=4,
+            ),
+            Message(session="A", text="Fe088nm8TTa, e3aiBnM\nBEAIRHATB9", is_me=False, ts=5),
+        ]
+    )
+    assert store.purge_garbled_messages() == 2
+    assert [m.text for m in store.recent_messages("A", 10)] == [
+        "合并相似的问题",
+        "https://r0ad.host/",
+        "OK",
+    ]
+    assert store.purge_garbled_messages() == 0  # 再跑一次是幂等的
+    store.close()

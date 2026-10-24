@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .models import Analysis, Message
+from .text_quality import looks_like_garbled
 
 
 SCHEMA = """
@@ -184,6 +185,21 @@ class Store:
                 " ORDER BY last_ts DESC"
             ).fetchall()
         return [row["session"] for row in rows]
+
+    def purge_garbled_messages(self) -> int:
+        """删掉历史里 OCR 乱码记录（图片里的字被硬读出来的垃圾），返回条数。
+
+        新版本在解析阶段就会挡住乱码；这一步只是把老库里已经被写进去的清掉，
+        避免重启后「对方最新消息」还显示 "TE088n m877a" 这种东西。
+        """
+        with self._lock:
+            rows = self._conn.execute("SELECT id, text FROM messages").fetchall()
+            bad = [int(row["id"]) for row in rows if looks_like_garbled(row["text"])]
+            if not bad:
+                return 0
+            self._conn.executemany("DELETE FROM messages WHERE id = ?", [(i,) for i in bad])
+            self._conn.commit()
+        return len(bad)
 
     # ---------- 建议 ----------
 
