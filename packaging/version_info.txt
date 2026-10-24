@@ -1,4 +1,4 @@
-﻿# UTF-8
+# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
     filevers=(0, 1, 0, 0),
@@ -16,13 +16,13 @@ VSVersionInfo(
         StringTable(
           "080404B0",
           [
-            StringStruct("CompanyName", "wxassist"),
-            StringStruct("FileDescription", "微信 AI 回复助手"),
+            StringStruct("CompanyName", "r0ad"),
+            StringStruct("FileDescription", "微信副驾 · WeChat Sidecar"),
             StringStruct("FileVersion", "0.1.0.0"),
             StringStruct("InternalName", "wxassist"),
             StringStruct("LegalCopyright", "MIT License"),
             StringStruct("OriginalFilename", "wxassist.exe"),
-            StringStruct("ProductName", "微信 AI 回复助手"),
+            StringStruct("ProductName", "微信副驾 · WeChat Sidecar"),
             StringStruct("ProductVersion", "0.1.0.0"),
           ],
         )

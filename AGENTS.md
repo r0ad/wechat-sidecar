@@ -1,14 +1,15 @@
-# AGENTS.md — 微信 AI 回复助手（wxassist）
+# AGENTS.md — 微信副驾 · WeChat Sidecar（内部名 wxassist）
 
 > 本文件是给 coding agent（Claude Code / Codex / Cursor / DSH 等）的项目规范。
 > **改动代码前先读完 §1 硬约束和 §2 命令**；行为、架构或约定变化时，同步更新本文件。
 > 所有面向用户的输出、UI 文案、提交信息、文档都用**中文**。
+> 对外名是 **微信副驾 · WeChat Sidecar**（仓库 `r0ad/wechat-sidecar`）；包名、exe、配置目录仍叫 `wxassist`，不要为了改名去动这些内部标识。
 
 ---
 
 ## 0. 项目是什么
 
-Windows 上的旁挂式微信回复助手：
+微信副驾（WeChat Sidecar）是 Windows 上的旁挂式微信回复助手：
 
 - **只读截屏 + 本地 OCR** 读取当前微信聊天窗口，不注入、不 Hook、不读数据库；
 - 调用 OpenAI 兼容大模型（默认 DeepSeek）判断意图，生成 3 条候选回复；
@@ -70,7 +71,7 @@ Windows 上的旁挂式微信回复助手：
 **只支持 Windows 10 1903+ / Windows 11，Python 3.10–3.12（python.org 版本）。**
 
 ```powershell
-cd D:\ws-dsh\wechat
+cd D:\path\to\wechat-sidecar
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt

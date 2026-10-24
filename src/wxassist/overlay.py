@@ -260,7 +260,7 @@ class Overlay(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("微信 AI 回复助手")
+        self.setWindowTitle("微信副驾")
         self.setWindowIcon(app_icon())
         # 不用 Tool 窗口：这样最小化后任务栏有图标可以点回来
         self.setWindowFlags(
@@ -300,7 +300,7 @@ class Overlay(QWidget):
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color: {ACCENT}; font-size: 12px;")
         header.addWidget(self.dot)
-        title = QLabel("微信 AI 回复助手")
+        title = QLabel("微信副驾")
         title.setObjectName("title")
         header.addWidget(title)
         self.session_label = QLabel("未连接")
@@ -670,7 +670,7 @@ def create_app() -> QApplication:
         pass
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("wxassist")
-    app.setApplicationDisplayName("微信 AI 回复助手")
+    app.setApplicationDisplayName("微信副驾")
     app.setWindowIcon(app_icon())
     font = QFont("Microsoft YaHei UI", 9)
     app.setFont(font)

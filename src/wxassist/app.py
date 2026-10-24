@@ -227,7 +227,7 @@ class AppController:
             log.info("系统托盘不可用，跳过托盘图标")
             return
         self.tray = QSystemTrayIcon(app_icon(), self.app)
-        self.tray.setToolTip("微信 AI 回复助手")
+        self.tray.setToolTip("微信副驾 · WeChat Sidecar")
         menu = QMenu()
         self._tray_toggle = QAction("隐藏悬浮窗", menu)
         self._tray_toggle.triggered.connect(self._toggle_overlay)
@@ -276,7 +276,7 @@ class AppController:
         if self.tray is not None and not self._tray_hint_shown:
             self._tray_hint_shown = True
             self.tray.showMessage(
-                "微信 AI 回复助手",
+                "微信副驾",
                 "已最小化。点任务栏图标、双击托盘图标，或按 Ctrl+Alt+J 都能恢复。",
                 QSystemTrayIcon.MessageIcon.Information,
                 5000,

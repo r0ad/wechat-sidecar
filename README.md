@@ -1,11 +1,20 @@
-# 微信 AI 回复助手（wxassist）
+# 微信副驾 · WeChat Sidecar
 
-> 旁挂式微信回复助手：**只截屏 + 本地 OCR** 读取当前会话 → 调用大模型（DeepSeek / OpenAI 兼容）判断对方意图 → 给出 3 条候选回复 → 一键填入输入框，可继续让 AI 改写、总结会话、学习你的说话风格。
-> **不注入、不破解、不读微信数据库、永不自动发送。**
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
+![Python](https://img.shields.io/badge/python-3.10--3.12-3776AB)
+![License](https://img.shields.io/badge/license-MIT-2ea44f)
+![Auto-send](https://img.shields.io/badge/auto--send-never-critical)
+
+> **微信旁挂式 AI 回复副驾。** 只读截屏 + 本地 OCR 看懂当前会话 → 大模型判断对方意图 → 给出 3 条候选回复 → 一键填入微信输入框，
+> 还能让 AI 改写、总结会话、学习你的说话风格。
+>
+> **不注入、不 Hook、不读微信数据库、截图不落盘、永不自动发送。** 它不是微信机器人，是坐在你旁边帮你起草的人。
 
 ![悬浮窗](docs/overlay.png)
 
 ![模型设置](docs/settings.png)
+
+> 仓库与展示名是 **WeChat Sidecar（微信副驾）**；可执行文件、配置目录、命令行仍沿用内部名 `wxassist`（`wxassist.exe`、`%LOCALAPPDATA%\wxassist`），两者是同一个程序。
 
 ---
 
@@ -99,8 +108,8 @@
 ## 安装
 
 ```powershell
-git clone <your-repo-url> wechat
-cd wechat
+git clone https://github.com/r0ad/wechat-sidecar.git wechat-sidecar
+cd wechat-sidecar
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt

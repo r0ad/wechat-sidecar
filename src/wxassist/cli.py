@@ -21,7 +21,7 @@ from .providers import PRESETS, get_preset
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wxassist",
-        description="微信 AI 回复助手：截屏 + 本地 OCR + 大模型候选回复，永不自动发送",
+        description="微信副驾（WeChat Sidecar）：截屏 + 本地 OCR + 大模型候选回复，永不自动发送",
     )
     parser.add_argument("--version", action="version", version=f"wxassist {__version__}")
     parser.add_argument("--config", help="配置文件路径（默认 ./config.local.json）")
