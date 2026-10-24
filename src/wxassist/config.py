@@ -21,7 +21,7 @@ def default_data_dir() -> Path:
 class LLMConfig:
     provider: str = "deepseek"  # deepseek | openai | dashscope | zhipu | siliconflow | ollama | custom
     base_url: str = "https://api.deepseek.com/v1"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-flash"
     api_key_env: str = "DEEPSEEK_API_KEY"
     api_key: str = ""  # 一般不填，Key 存在 DPAPI 加密文件或环境变量里
     temperature: float = 0.8

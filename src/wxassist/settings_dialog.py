@@ -122,7 +122,7 @@ class SettingsDialog(QDialog):
         model_row = QHBoxLayout()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.setPlaceholderText("deepseek-chat")
+        self.model_combo.setPlaceholderText("deepseek-flash")
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.setToolTip("从服务端拉取模型列表")
         self.refresh_btn.clicked.connect(self._on_refresh_models)

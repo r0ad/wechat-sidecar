@@ -146,13 +146,17 @@ python run.py --set-key "sk-你的key"
 
 | 服务商 | Base URL | 默认模型 |
 |---|---|---|
-| DeepSeek（推荐） | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| 阿里百炼 / 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
-| 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-7B-Instruct` |
-| 本地 Ollama | `http://127.0.0.1:11434/v1` | `qwen2.5:7b` |
+| DeepSeek（推荐） | `https://api.deepseek.com/v1` | `deepseek-flash` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-6-luna` |
+| 阿里百炼 / 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3.8-flash` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.3-flash` |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3.6-35B-A3B` |
+| 本地 Ollama | `http://127.0.0.1:11434/v1` | `qwen3.8:8b` |
 | 自定义 | 任意 `/chat/completions` 兼容地址 | 手填 |
+
+> 上表是 **2026-10** 的默认值（各家的快速/低价档）。模型更新很快：设置里点「刷新」
+> 可从服务端拉最新模型列表；想要更强效果，可换 DeepSeek `deepseek-v4-pro`、
+> OpenAI `gpt-6-astra` / `gpt-6-sol`、Qwen `qwen3.8-max`、GLM `glm-5.3`。
 
 ## 运行
 
@@ -292,7 +296,7 @@ python build.py --console       # 保留控制台窗口，排查启动问题
 |---|---|---|
 | `llm.provider` | `deepseek` | 服务商 |
 | `llm.base_url` | `https://api.deepseek.com/v1` | OpenAI 兼容地址 |
-| `llm.model` | `deepseek-chat` | 模型名 |
+| `llm.model` | `deepseek-flash` | 模型名 |
 | `llm.api_key_env` | `DEEPSEEK_API_KEY` | 环境变量名（优先于本地 Key） |
 | `llm.temperature` | `0.8` | 生成温度 |
 | `llm.max_tokens` | `700` | 单次最大输出 |
