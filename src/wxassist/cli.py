@@ -180,7 +180,7 @@ def run_selftest(cfg: Config, snapshot: str | None, debug: bool = False) -> int:
     result = BubbleParser(cfg.capture).parse(lines, image, region)
     print(f"[4/4] 解析：会话={result.session!r}，气泡={len(result.bubbles)}")
     for bubble in result.bubbles[-10:]:
-        who = "我" if bubble.is_me else "对方"
+        who = "我" if bubble.is_me else (bubble.sender or "对方")
         print(f"      [{who}] {bubble.text[:60]!r}")
 
     if debug:

@@ -51,3 +51,9 @@ def test_switch_session_does_not_emit_history() -> None:
     tracker.switch_session("Bob", [bubble("Bob 的历史")])
     assert tracker.ingest([bubble("Bob 的历史")]) == []
     assert tracker.session == "Bob"
+
+
+def test_sender_is_preserved() -> None:
+    tracker = SessionTracker("群聊(3)")
+    new = tracker.ingest([Bubble(text="在吗", is_me=False, x0=0, y0=0, x1=1, y1=1, sender="张三")])
+    assert new[0].sender == "张三"

@@ -9,6 +9,7 @@ import time
 
 from .config import Config
 from .json_utils import extract_json
+from .layout import is_group_name
 from .llm import LLMClient, LLMError
 from .memory import build_block, load_memory
 from .persona import build_block as build_persona_block, load_persona
@@ -67,6 +68,7 @@ class SuggestEngine:
         if self.cfg.privacy.redact_before_send:
             context = redact_messages(context)
 
+        group_chat = is_group_name(session)
         pending = unanswered_messages(context)
         proactive = False
         if not pending:
@@ -116,10 +118,14 @@ class SuggestEngine:
             relationship,
             style_profile=style_profile,
             avoid=avoid,
-            unanswered=[message.text for message in pending],
+            unanswered=[
+                f"{message.sender}：{message.text}" if message.sender else message.text
+                for message in pending
+            ],
             memory_text=memory_text,
             persona_text=persona_text,
             proactive=proactive,
+            group=group_chat,
         )
         try:
             draft, tokens = self._chat_json(DRAFT_SYSTEM, draft_user, max_tokens=800)

@@ -40,6 +40,10 @@ QLabel {{ color: #E6E8EB; }}
 QLabel#title {{ font-size: 14px; font-weight: 600; color: #FFFFFF; }}
 QLabel#session {{ font-size: 12px; color: #8B93A1; }}
 QLabel#incoming {{ font-size: 13px; color: #D7DAE0; }}
+QPlainTextEdit#incomingView {{
+    background: transparent; border: none; color: #D7DAE0;
+    font-size: 13px; padding: 0;
+}}
 QLabel#section {{ font-size: 11px; color: #7E8794; }}
 QLabel#chip {{
     font-size: 11px; color: #B8C0CC;
@@ -134,6 +138,14 @@ REFINE_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+class CopyableLabel(QLabel):
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
 class CandidateCard(QFrame):
     fill_clicked = Signal(str)
     copy_clicked = Signal(str)
@@ -161,10 +173,14 @@ class CandidateCard(QFrame):
             top.addWidget(score)
         layout.addLayout(top)
 
-        self.text_label = QLabel(candidate.text)
+        self.text_label = CopyableLabel(candidate.text)
         self.text_label.setObjectName("candidateText")
         self.text_label.setWordWrap(True)
+        self.text_label.setToolTip("双击复制这条候选")
         self.text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.text_label.double_clicked.connect(
+            lambda: self.copy_clicked.emit(self.text_label.text())
+        )
         layout.addWidget(self.text_label)
 
         actions = QHBoxLayout()
@@ -179,6 +195,8 @@ class CandidateCard(QFrame):
         refine_btn.setMenu(menu)
         self.copy_btn = QPushButton("复制")
         self.copy_btn.setObjectName("ghost")
+        self.copy_btn.setMinimumWidth(58)
+        self.copy_btn.setToolTip("复制到剪贴板")
         self.copy_btn.clicked.connect(self._on_copy_clicked)
         self.fill_btn = QPushButton("填入")
         self.fill_btn.setObjectName("primary")
@@ -311,11 +329,13 @@ class Overlay(QWidget):
         self.incoming_title.setObjectName("section")
         layout.addWidget(self.incoming_title)
 
-        self.incoming_label = QLabel("等待对方发来新消息…")
-        self.incoming_label.setObjectName("incoming")
-        self.incoming_label.setWordWrap(True)
-        self.incoming_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.incoming_label)
+        self.incoming_view = QPlainTextEdit()
+        self.incoming_view.setObjectName("incomingView")
+        self.incoming_view.setReadOnly(True)
+        self.incoming_view.setMinimumHeight(52)
+        self.incoming_view.setMaximumHeight(118)
+        self.incoming_view.setPlainText("等待对方发来新消息…")
+        layout.addWidget(self.incoming_view)
 
         # intent chips
         self.chips_layout = QHBoxLayout()
@@ -459,8 +479,11 @@ class Overlay(QWidget):
 
     def show_analysis(self, analysis: Analysis) -> None:
         self.set_session(analysis.session)
-        incoming_text = "\n".join(m.text for m in analysis.incoming) or "（新消息为空）"
-        self.incoming_label.setText(incoming_text)
+        incoming_lines = []
+        for message in analysis.incoming[-6:]:
+            who = f"{message.sender}：" if message.sender else ""
+            incoming_lines.append(f"{who}{message.text}")
+        self.incoming_view.setPlainText("\n".join(incoming_lines) or "（新消息为空）")
         self._set_chips(analysis)
         if analysis.warning:
             self.warning_label.setText("⚠ " + analysis.warning)

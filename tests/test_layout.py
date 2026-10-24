@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from wxassist.config import CaptureConfig
-from wxassist.layout import BubbleParser
+from wxassist.layout import BubbleParser, is_group_name
 from wxassist.models import OcrLine
 
 
@@ -103,3 +103,53 @@ def test_body_region_filters_input_area_and_sidebar() -> None:
     ]
     result = BubbleParser(cfg).parse(lines, img)
     assert [b.text for b in result.bubbles] == ["正文消息"]
+
+
+def test_group_sender_name_attached_to_bubble() -> None:
+    cfg = CaptureConfig()
+    img = blank_image()
+    cv2.rectangle(img, (215, 300), (470, 350), (255, 255, 255), -1)
+    cv2.rectangle(img, (215, 420), (470, 470), (255, 255, 255), -1)
+    lines = [
+        make_line("吟游诗人(7)", 300, 20, 450, 50),
+        make_line("冯敏娟", 218, 272, 280, 292),
+        make_line("情绪激动了吗？", 230, 312, 420, 338),
+        make_line("杨文品", 218, 392, 280, 412),
+        make_line("现在好了", 230, 432, 360, 458),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert result.session == "吟游诗人(7)"
+    assert [b.sender for b in result.bubbles] == ["冯敏娟", "杨文品"]
+    assert [b.text for b in result.bubbles] == ["情绪激动了吗？", "现在好了"]
+
+
+def test_month_day_time_separator_filtered() -> None:
+    cfg = CaptureConfig()
+    img = blank_image(color=(30, 30, 30))
+    lines = [
+        make_line("9月21日 15:05", 360, 100, 500, 122),
+        make_line("真实消息", 220, 260, 340, 280),
+    ]
+    result = BubbleParser(cfg).parse(lines, img)
+    assert [b.text for b in result.bubbles] == ["真实消息"]
+
+
+def test_group_name_detection() -> None:
+    assert is_group_name("吟游诗人(7)")
+    assert is_group_name("项目群 (12)")
+    assert not is_group_name("卢恒")
+    assert not is_group_name("")
+
+
+def test_split_leading_sender() -> None:
+    parser = BubbleParser(CaptureConfig())
+    name = make_line("彭乐", 349, 188, 385, 204)
+    text = make_line("你们啥时候来杭州", 362, 218, 530, 235)
+    sender, remaining = parser._split_leading_sender([name, text])
+    assert sender == "彭乐"
+    assert [line.text for line in remaining] == ["你们啥时候来杭州"]
+
+    wrapped_first = make_line("我倒是想来，就是没有理由出来", 362, 373, 560, 387)
+    wrapped_second = make_line("过节", 360, 391, 400, 409)
+    sender2, _ = parser._split_leading_sender([wrapped_first, wrapped_second])
+    assert sender2 == ""

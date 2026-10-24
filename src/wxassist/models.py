@@ -42,13 +42,14 @@ class Bubble:
     x1: int
     y1: int
     lines: list[OcrLine] = field(default_factory=list)
+    sender: str = ""
 
     @property
     def cx(self) -> float:
         return (self.x0 + self.x1) / 2
 
     def digest(self) -> str:
-        raw = f"{self.is_me}|{self.text}".encode("utf-8")
+        raw = f"{self.is_me}|{self.sender}|{self.text}".encode("utf-8")
         return hashlib.sha1(raw).hexdigest()[:16]
 
 

@@ -17,9 +17,16 @@ from .config import CaptureConfig
 from .models import Bubble, OcrLine
 
 TIME_SEPARATOR = re.compile(
-    r"^(?:(?:昨天|今天|前天|星期[一二三四五六日天]|周[一二三四五六日天])?\s*)?"
-    r"(?:\d{1,2}[:：]\d{2}|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?)$"
+    r"^(?:(?:昨天|今天|前天|星期[一二三四五六日天]|周[一二三四五六日天])\s*)?"
+    r"(?:\d{1,2}[:：]\d{2}"
+    r"|\d{1,2}月\d{1,2}日(?:\s*\d{1,2}[:：]\d{2})?"
+    r"|(?:\d{4}[-/年])?\d{1,2}[-/月]\d{1,2}日?)$"
 )
+GROUP_NAME = re.compile(r"[（(]\s*\d+\s*[)）]")
+
+
+def is_group_name(name: str) -> bool:
+    return bool(GROUP_NAME.search(name or ""))
 SYSTEM_HINTS = (
     "以下为新消息",
     "你已添加",
@@ -129,13 +136,28 @@ class BubbleParser:
 
         boxes = self._detect_boxes(image, chat_left, header_bottom, input_top)
         groups: list[tuple[BubbleBox | None, list[OcrLine]]] = []
+        leftovers: list[OcrLine] = []
         if boxes:
-            groups = self._assign_to_boxes(body, boxes)
+            groups, leftovers = self._assign_to_boxes(body, boxes)
         if not any(g[0] is not None for g in groups):
             groups = [(box, ln_list) for box, ln_list in self._fallback_groups(body)]
 
+        group_chat = is_group_name(session)
+        sender_map: dict[int, str] = {}
+        if group_chat and groups and leftovers:
+            sender_map, leftovers = self._extract_senders(leftovers, groups)
+        if leftovers:
+            for _, ln_list in self._fallback_groups(leftovers):
+                groups.append((None, ln_list))
+
         bubbles: list[Bubble] = []
         for box, ln_list in groups:
+            sender = sender_map.get(id(box), "") if box is not None else ""
+            if group_chat and not sender:
+                leading, remaining = self._split_leading_sender(ln_list)
+                if leading:
+                    sender = leading
+                    ln_list = remaining
             text = self._join_lines(ln_list)
             if not text:
                 continue
@@ -149,7 +171,16 @@ class BubbleParser:
                 x1 = max(ln.x1 for ln in ln_list)
                 y1 = max(ln.y1 for ln in ln_list)
             bubbles.append(
-                Bubble(text=text, is_me=is_me, x0=x0, y0=y0, x1=x1, y1=y1, lines=ln_list)
+                Bubble(
+                    text=text,
+                    is_me=is_me,
+                    x0=x0,
+                    y0=y0,
+                    x1=x1,
+                    y1=y1,
+                    lines=ln_list,
+                    sender=sender,
+                )
             )
         bubbles.sort(key=lambda b: b.y0)
         return ParseResult(session=session, bubbles=bubbles, dropped=0)
@@ -184,43 +215,46 @@ class BubbleParser:
         region = image[top:bottom, chat_left:]
         if region.size == 0:
             return []
-        rgb = region
-        r = rgb[:, :, 0].astype(np.int16)
-        g = rgb[:, :, 1].astype(np.int16)
-        b = rgb[:, :, 2].astype(np.int16)
+        rgb = region.astype(np.int16)
+        # 用中位色估计聊天背景；气泡和背景的差值（浅色/深色主题都适用）
+        background = np.median(rgb.reshape(-1, 3), axis=0)
+        diff = np.abs(rgb - background).max(axis=2)
+        mask = (diff > 8).astype(np.uint8)
+        # 填掉气泡里的文字笔画，再清掉噪点
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
 
-        # 微信己方气泡：绿色系（浅绿 #95EC69 / 深绿 #07C160 / 深色模式下的暗绿）
-        green = ((g > 120) & (g - r > 18) & (g - b > 18)).astype(np.uint8)
-        # 对方气泡：纯白（聊天背景是浅灰，白气泡更亮）
-        white = ((r > 246) & (g > 246) & (b > 246)).astype(np.uint8)
+        r = rgb[:, :, 0]
+        g = rgb[:, :, 1]
+        b = rgb[:, :, 2]
+        green_mask = (g > 120) & (g - r > 15) & (g - b > 15)
 
         boxes: list[BubbleBox] = []
         region_h, region_w = region.shape[:2]
-        for mask, is_me in ((green, True), (white, False)):
-            if int(mask.sum()) < 160:
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if w < 50 or h < 18:
                 continue
-            kernel = np.ones((3, 3), np.uint8)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in contours:
-                x, y, w, h = cv2.boundingRect(cnt)
-                if w < 24 or h < 16:
-                    continue
-                if w > region_w * 0.92 or h > region_h * 0.5:
-                    continue
-                if w * h < 500:
-                    continue
-                boxes.append(
-                    BubbleBox(
-                        x0=x + chat_left,
-                        y0=y + top,
-                        x1=x + w + chat_left,
-                        y1=y + h + top,
-                        is_me=is_me,
-                    )
+            if w > region_w * 0.92 or h > region_h * 0.55:
+                continue
+            if w * h < 900:
+                continue
+            # 头像/表情图：接近正方形且尺寸偏小，跳过（里面没有聊天气泡文字）
+            if w < 90 and h < 90 and abs(w - h) < 12:
+                continue
+            cell = green_mask[y : y + h, x : x + w]
+            is_me = bool(cell.size and cell.mean() > 0.15)
+            boxes.append(
+                BubbleBox(
+                    x0=x + chat_left,
+                    y0=y + top,
+                    x1=x + w + chat_left,
+                    y1=y + h + top,
+                    is_me=is_me,
                 )
-        # 去掉互相包含的小框（同一气泡被两个 mask 各抓一次时保留较大的）
+            )
         boxes.sort(key=lambda bx: bx.width * bx.height, reverse=True)
         kept: list[BubbleBox] = []
         for bx in boxes:
@@ -231,7 +265,7 @@ class BubbleParser:
 
     def _assign_to_boxes(
         self, lines: list[OcrLine], boxes: list[BubbleBox]
-    ) -> list[tuple[BubbleBox | None, list[OcrLine]]]:
+    ) -> tuple[list[tuple[BubbleBox | None, list[OcrLine]]], list[OcrLine]]:
         groups: dict[int, list[OcrLine]] = {i: [] for i in range(len(boxes))}
         leftovers: list[OcrLine] = []
         for ln in lines:
@@ -252,11 +286,66 @@ class BubbleParser:
         for idx, box in enumerate(boxes):
             if groups[idx]:
                 result.append((box, groups[idx]))
-        # 没被任何气泡覆盖的行，退回行间距分组
-        if leftovers:
-            for _, ln_list in self._fallback_groups(leftovers):
-                result.append((None, ln_list))
-        return result
+        return result, leftovers
+
+    def _split_leading_sender(
+        self, lines: list[OcrLine]
+    ) -> tuple[str, list[OcrLine]]:
+        """群聊里名字行被并进气泡时，把开头那行短名字拆出来。"""
+        ordered = sorted(lines, key=lambda ln: (ln.y0, ln.x0))
+        if len(ordered) < 2:
+            return "", lines
+        first, second = ordered[0], ordered[1]
+        text = first.text.strip()
+        if not text or len(text) > 12:
+            return "", lines
+        if any(ch in text for ch in "。！？!?，,、；;：:"):
+            return "", lines
+        if TIME_SEPARATOR.match(text):
+            return "", lines
+        # 名字行通常比正文左一点，且比正文行高更小
+        if first.x0 > second.x0 - 4:
+            return "", lines
+        heights = sorted(line.height for line in ordered)
+        median = heights[len(heights) // 2] if heights else first.height
+        if first.height > median * 1.15:
+            return "", lines
+        return text, ordered[1:]
+
+    def _extract_senders(
+        self,
+        leftovers: list[OcrLine],
+        groups: list[tuple[BubbleBox | None, list[OcrLine]]],
+    ) -> tuple[dict[int, str], list[OcrLine]]:
+        """群聊：把气泡上方那行短文字识别成发言人。"""
+        heights = sorted(line.height for _box, lines in groups for line in lines)
+        median = heights[len(heights) // 2] if heights else 20
+        boxes = [(id(box), box) for box, _lines in groups if box is not None]
+        senders: dict[int, str] = {}
+        consumed: set[int] = set()
+        for line in sorted(leftovers, key=lambda item: item.y0):
+            text = line.text.strip()
+            if not text or len(text) > 16:
+                continue
+            if TIME_SEPARATOR.match(text) or self._is_noise(text):
+                continue
+            if line.height > median * 1.3:
+                continue
+            best_key = None
+            best_gap = 10**9
+            for key, box in boxes:
+                if key in senders:
+                    continue
+                if not (box.x0 - 16 <= line.x0 <= box.x0 + 40):
+                    continue
+                gap = box.y0 - line.y1
+                if 0 <= gap <= max(18, int(median * 2.0)) and gap < best_gap:
+                    best_key, best_gap = key, gap
+            if best_key is not None:
+                senders[best_key] = text
+                consumed.add(id(line))
+        remaining = [line for line in leftovers if id(line) not in consumed]
+        return senders, remaining
 
     def _fallback_groups(self, lines: list[OcrLine]) -> list[tuple[None, list[OcrLine]]]:
         ordered = sorted(lines, key=lambda ln: (ln.y0, ln.x0))

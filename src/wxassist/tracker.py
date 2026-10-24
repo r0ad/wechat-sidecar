@@ -27,7 +27,15 @@ class SessionTracker:
         self.last = list(bubbles)
         out: list[Message] = []
         for b in new_bubbles:
-            out.append(Message(session=self.session, text=b.text, is_me=b.is_me, ts=ts or 0.0))
+            out.append(
+                Message(
+                    session=self.session,
+                    text=b.text,
+                    is_me=b.is_me,
+                    ts=ts or 0.0,
+                    sender=b.sender,
+                )
+            )
         return out
 
     # ---------- 内部 ----------

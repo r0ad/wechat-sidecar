@@ -161,3 +161,32 @@ def test_multi_question_messages_are_combined(tmp_path) -> None:
     assert "不要只回最后一句" in prompts[0]
     assert "时间" in prompts[0] and "地点" in prompts[0]
     store.close()
+
+
+def test_group_chat_prompt_has_senders_and_group_rule(tmp_path) -> None:
+    engine, llm, store = make_engine(tmp_path)
+    messages = [
+        Message(session="群聊(7)", text="我先去忙", is_me=True, ts=1),
+        Message(session="群聊(7)", text="在吗", is_me=False, ts=2, sender="张三"),
+        Message(session="群聊(7)", text="几点集合", is_me=False, ts=3, sender="李四"),
+    ]
+    analysis = engine.analyze("群聊(7)", messages, messages[-2:])
+    assert analysis.ok
+    assert [m.sender for m in analysis.incoming] == ["张三", "李四"]
+    draft = [user for system, user in llm.calls if "[DRAFT]" in system][0]
+    assert "群聊" in draft
+    assert "张三：" in draft and "李四：" in draft
+    store.close()
+
+
+def test_format_history_uses_sender() -> None:
+    from wxassist.prompts import format_history
+
+    text = format_history(
+        [
+            Message(session="s", text="hi", is_me=False, sender="张三"),
+            Message(session="s", text="hello", is_me=True),
+        ]
+    )
+    assert "张三：hi" in text
+    assert "我：hello" in text

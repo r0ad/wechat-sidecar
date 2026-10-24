@@ -26,10 +26,10 @@ INJECTION_HINTS = (
 
 
 def format_history(messages: list[Message]) -> str:
-    """把消息渲染成「我：/ 对方：」的多行文本。"""
+    """把消息渲染成「我：/ 对方：/ 群成员名：」的多行文本。"""
     lines = []
     for message in messages:
-        who = "我" if message.is_me else "对方"
+        who = "我" if message.is_me else (message.sender or "对方")
         text = message.text.replace(FENCE_CLOSE, "&lt;/conversation&gt;")
         lines.append(f"{who}：{text}")
     return "\n".join(lines)
@@ -113,6 +113,7 @@ def build_draft_user(
     memory_text: str = "",
     persona_text: str = "",
     proactive: bool = False,
+    group: bool = False,
 ) -> str:
     questions = [str(q) for q in (intent.get("questions") or []) if str(q).strip()]
     must_answer = [str(q) for q in (intent.get("must_answer") or []) if str(q).strip()]
@@ -145,6 +146,12 @@ def build_draft_user(
         )
     memory_block = f"\n\n{memory_text}" if memory_text else ""
     persona_block = f"\n\n{persona_text}" if persona_text else ""
+    group_text = ""
+    if group:
+        group_text = (
+            "\n\n这是群聊：最近有多个人发言，先判断这条回复主要是回给谁；"
+            "候选要覆盖所有还没答复的问题，必要时在句首称呼对方名字，但不要 @ 错人。"
+        )
     proactive_text = ""
     if proactive:
         proactive_text = (
@@ -154,7 +161,7 @@ def build_draft_user(
     rel = relationship.strip() or "未提供"
     return (
         f"关系/备注：{rel}\n"
-        f"分析结论：{intent_text}{style}{avoid_text}{pending_text}{memory_block}{persona_block}{proactive_text}\n\n"
+        f"分析结论：{intent_text}{style}{avoid_text}{pending_text}{memory_block}{persona_block}{group_text}{proactive_text}\n\n"
         f"{FENCE_OPEN}\n{history_text}\n{FENCE_CLOSE}\n\n"
         "请输出 JSON。"
     )
