@@ -100,8 +100,10 @@ jobs:
       - name: 创建 / 更新 Release
         uses: softprops/action-gh-release@v2
         with:
+          name: 微信副驾 ${{ github.ref_name }}
           files: |
             wxassist-onefile.exe
             wxassist-onefile.exe.sha256
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
