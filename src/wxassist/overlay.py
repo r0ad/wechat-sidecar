@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
+from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import AUTO_SUGGEST_MODES, CAPTURE_PRESETS
 from .models import Analysis, Candidate
 from . import icons
 from .resources import app_icon
@@ -245,6 +246,9 @@ class Overlay(QWidget):
     fill_requested = Signal(str)
     copy_requested = Signal(str)
     regenerate_requested = Signal()
+    capture_once_requested = Signal()
+    capture_mode_changed = Signal(str)
+    auto_suggest_changed = Signal(str)
     pause_toggled = Signal(bool)
     hidden_by_user = Signal()
     quit_requested = Signal()
@@ -385,6 +389,10 @@ class Overlay(QWidget):
 
         # footer
         row1 = QHBoxLayout()
+        self.capture_btn = QPushButton("立即识别")
+        self.capture_btn.setObjectName("primary")
+        self.capture_btn.setToolTip("立刻截当前帧 + 本地 OCR + 生成候选（Ctrl+Alt+K）")
+        self.capture_btn.clicked.connect(self.capture_once_requested.emit)
         self.regenerate_btn = QPushButton("换一批")
         self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
         self.summary_btn = QPushButton("总结会话")
@@ -395,6 +403,7 @@ class Overlay(QWidget):
         self.style_btn = QPushButton("学我说话")
         self.style_btn.setToolTip("用我的历史回复生成说话风格画像，让候选更像本人")
         self.style_btn.clicked.connect(self.learn_style_requested.emit)
+        row1.addWidget(self.capture_btn)
         row1.addWidget(self.regenerate_btn)
         row1.addWidget(self.memory_btn)
         row1.addWidget(self.summary_btn)
@@ -409,6 +418,12 @@ class Overlay(QWidget):
         self.context_btn = QPushButton("上下文 0")
         self.context_btn.setToolTip("查看当前会话已读取的上下文消息")
         self.context_btn.clicked.connect(self._toggle_context)
+        self.capture_menu_btn = QPushButton("节奏 均衡")
+        self.capture_menu_btn.setToolTip(
+            "采集节奏：灵敏 0.4s / 均衡 0.7s / 省电 1.5s / 仅手动（不后台截屏）\n"
+            "自动生成候选：每条新消息 / 仅切会话 / 仅手动"
+        )
+        self._build_capture_menu()
         self.pause_btn = QPushButton("暂停采集")
         self.pause_btn.clicked.connect(self._toggle_pause)
         debug_btn = QPushButton("调试")
@@ -419,6 +434,7 @@ class Overlay(QWidget):
         quit_btn.clicked.connect(self.quit_requested.emit)
         row2.addWidget(self.load_more_btn)
         row2.addWidget(self.context_btn)
+        row2.addWidget(self.capture_menu_btn)
         row2.addWidget(self.pause_btn)
         row2.addStretch(1)
         row2.addWidget(debug_btn)
@@ -451,6 +467,36 @@ class Overlay(QWidget):
         button.setToolTip(tooltip)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         return button
+
+    def _build_capture_menu(self) -> None:
+        """节奏菜单：采集档位（互斥）+ 自动生成候选时机（互斥）。"""
+        menu = QMenu(self.capture_menu_btn)
+        self._preset_group = QActionGroup(menu)
+        self._preset_group.setExclusive(True)
+        self._preset_actions: dict[str, QAction] = {}
+        for key, label, interval_ms, auto in CAPTURE_PRESETS:
+            text = label if not auto else f"{label}（{interval_ms / 1000:.1f}s）"
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setActionGroup(self._preset_group)
+            action.triggered.connect(
+                lambda _checked=False, k=key: self.capture_mode_changed.emit(k)
+            )
+            self._preset_actions[key] = action
+        menu.addSeparator()
+        suggest_menu = menu.addMenu("自动生成候选")
+        self._suggest_group = QActionGroup(suggest_menu)
+        self._suggest_group.setExclusive(True)
+        self._suggest_actions: dict[str, QAction] = {}
+        for key, label in AUTO_SUGGEST_MODES:
+            action = suggest_menu.addAction(label)
+            action.setCheckable(True)
+            action.setActionGroup(self._suggest_group)
+            action.triggered.connect(
+                lambda _checked=False, k=key: self.auto_suggest_changed.emit(k)
+            )
+            self._suggest_actions[key] = action
+        self.capture_menu_btn.setMenu(menu)
 
     def _refresh_pin_icon(self, pinned: bool) -> None:
         self.pin_btn.setIcon(icons.icon("pin_on" if pinned else "pin", "#07C160" if pinned else "#D7DAE0"))
@@ -564,6 +610,25 @@ class Overlay(QWidget):
         self._fill_mode = "paste" if mode == "paste" else "copy"
         for card in self._cards:
             card.fill_done_text = "已填入" if self._fill_mode == "paste" else "已复制"
+
+    def set_capture_state(self, preset_key: str, interval_ms: int, auto_suggest: str) -> None:
+        """同步「节奏」按钮文案与菜单勾选（配置以 app 为准）。"""
+        label = next(
+            (name for key, name, _interval, _auto in CAPTURE_PRESETS if key == preset_key),
+            "",
+        )
+        if not label:
+            label = f"{max(250, interval_ms) / 1000:.1f}s"
+        self.capture_menu_btn.setText(f"节奏 {label}")
+        for key, action in self._preset_actions.items():
+            action.setChecked(key == preset_key)
+        for key, action in self._suggest_actions.items():
+            action.setChecked(key == auto_suggest)
+
+    def set_capturing(self, busy: bool) -> None:
+        """手动识别的忙碌态：按钮置灰 + 文案变化，避免连点。"""
+        self.capture_btn.setEnabled(not busy)
+        self.capture_btn.setText("识别中…" if busy else "立即识别")
 
     def set_context_count(self, total: int) -> None:
         self.context_btn.setText(f"上下文 {total}")

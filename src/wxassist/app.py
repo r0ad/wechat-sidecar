@@ -13,7 +13,13 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import capture as capture_mod
-from .config import Config
+from .config import (
+    AUTO_SUGGEST_MODES,
+    Config,
+    apply_capture_preset,
+    capture_preset_key,
+    preset_label,
+)
 from .engine import SuggestEngine
 from .filler import FillError, copy_to_clipboard, fill as fill_text
 from .hotkey import HotkeyManager
@@ -63,6 +69,8 @@ class Bridge(QObject):
     status_changed = Signal(str, str)
     debug_ready = Signal(str, object, object, str)
     toggle_overlay = Signal()
+    capture_requested = Signal()
+    capture_finished = Signal(str)
     summary_ready = Signal(object)
     style_ready = Signal(str, str)
     refined = Signal(str, str, str)
@@ -136,6 +144,7 @@ class AppController:
         self._follow_timer: QTimer | None = None
         self._proactive_done: set[str] = set()
         self._last_analysis_ts = 0.0
+        self._capturing = False
         self.tray: QSystemTrayIcon | None = None
         self._tray_hint_shown = False
         self._tray_toggle: QAction | None = None
@@ -159,6 +168,11 @@ class AppController:
         self.overlay.fill_requested.connect(self._on_fill)
         self.overlay.copy_requested.connect(self._on_copy)
         self.overlay.regenerate_requested.connect(self._on_regenerate)
+        self.overlay.capture_once_requested.connect(self._on_capture_once)
+        self.overlay.capture_mode_changed.connect(self._on_capture_mode_changed)
+        self.overlay.auto_suggest_changed.connect(self._on_auto_suggest_changed)
+        self.bridge.capture_requested.connect(self._on_capture_once)
+        self.bridge.capture_finished.connect(self._on_capture_finished)
         self.overlay.pause_toggled.connect(self._on_pause)
         self.overlay.quit_requested.connect(self._on_quit_clicked)
         self.overlay.settings_requested.connect(self._open_settings)
@@ -187,6 +201,9 @@ class AppController:
         if purged:
             log.info("已清理 %s 条 OCR 乱码记录（图片里的文字被误读，不是真实消息）", purged)
         self.overlay.set_fill_mode(self.cfg.filler.mode)
+        self.overlay.set_capture_state(
+            capture_preset_key(self.cfg), self.cfg.capture.interval_ms, self.cfg.ui.auto_suggest
+        )
         self.overlay.show()
         self._setup_tray()
         self.overlay.set_model_ready(self.llm.has_key())
@@ -209,6 +226,15 @@ class AppController:
         if self.cfg.ui.hotkey:
             ok = self.hotkeys.register(self.cfg.ui.hotkey, self.bridge.toggle_overlay.emit)
             log.info("全局热键 %s 注册%s", self.cfg.ui.hotkey, "成功" if ok else "失败（可忽略）")
+        if self.cfg.ui.manual_hotkey:
+            ok = self.hotkeys.register(
+                self.cfg.ui.manual_hotkey, self.bridge.capture_requested.emit
+            )
+            log.info(
+                "立即识别热键 %s 注册%s",
+                self.cfg.ui.manual_hotkey,
+                "成功" if ok else "失败（可忽略）",
+            )
         self.app.aboutToQuit.connect(self.shutdown)
         self._watch_timer = QTimer(self.app)
         self._watch_timer.setInterval(1000)
@@ -231,6 +257,8 @@ class AppController:
         menu = QMenu()
         self._tray_toggle = QAction("隐藏悬浮窗", menu)
         self._tray_toggle.triggered.connect(self._toggle_overlay)
+        self._tray_capture = QAction("立即识别当前聊天", menu)
+        self._tray_capture.triggered.connect(self._on_capture_once)
         self._tray_pause = QAction("暂停采集", menu)
         self._tray_pause.setCheckable(True)
         self._tray_pause.toggled.connect(self._on_pause)
@@ -245,6 +273,7 @@ class AppController:
         quit_action = QAction("退出", menu)
         quit_action.triggered.connect(self.app.quit)
         menu.addAction(self._tray_toggle)
+        menu.addAction(self._tray_capture)
         menu.addAction(self._tray_pause)
         menu.addAction(self._tray_follow)
         menu.addSeparator()
@@ -350,12 +379,16 @@ class AppController:
     def _on_session_changed(self, session: str) -> None:
         self.overlay.set_session(session)
         self.overlay.set_context_count(self.store.count_messages(session))
+        if self.cfg.ui.auto_suggest == "manual":
+            return  # 仅手动：切会话也不自动生成
         if self.cfg.ui.auto_proactive and session:
             QTimer.singleShot(2000, lambda: self._run_proactive(session))
 
     def _run_proactive(self, session: str) -> None:
         """切到新会话后，即使没有新消息，也基于当前对话主动生成一次候选。"""
         if not self.cfg.ui.auto_proactive or self.pipeline is None:
+            return
+        if self.cfg.ui.auto_suggest == "manual":
             return
         if session != self._session():
             return
@@ -463,6 +496,80 @@ class AppController:
             args=(self._current_session, avoid),
             daemon=True,
         ).start()
+
+    def _on_capture_once(self) -> None:
+        """立即识别：抓当前帧 → OCR → 生成候选（按钮 / Ctrl+Alt+K / 托盘共用）。"""
+        self._touch()
+        if self.pipeline is None or self._capturing:
+            return
+        if not self.llm.has_key():
+            self.overlay.set_model_ready(False)
+            self.overlay.set_status("error", "还没有配置大模型：点右上角 ⚙ 设置后重试")
+            return
+        self._capturing = True
+        self.overlay.set_capturing(True)
+        self.overlay.set_busy("正在截屏识别当前聊天…")
+
+        def worker() -> None:
+            error = ""
+            try:
+                self.pipeline.capture_once()
+            except capture_mod.CaptureError as exc:
+                error = str(exc)
+            except Exception as exc:  # pragma: no cover - 保护后台线程
+                error = f"识别失败：{exc}"
+            self.bridge.capture_finished.emit(error)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_capture_finished(self, error: str) -> None:
+        self._capturing = False
+        self.overlay.set_capturing(False)
+        if error:
+            self.overlay.set_status("error", error)
+
+    def _on_capture_mode_changed(self, key: str) -> None:
+        """切换采集节奏（灵敏/均衡/省电/仅手动）。"""
+        self._touch()
+        if not apply_capture_preset(self.cfg, key):
+            return
+        self._save_config()
+        if self.pipeline is not None:
+            self.pipeline.apply_capture_mode()
+        self.overlay.set_capture_state(
+            capture_preset_key(self.cfg), self.cfg.capture.interval_ms, self.cfg.ui.auto_suggest
+        )
+        if self.cfg.capture.auto_capture:
+            self.overlay.set_status("ok", f"采集节奏：{preset_label(self.cfg)}")
+        else:
+            self.overlay.set_status(
+                "wait", "已切到仅手动识别：不后台截屏，点「立即识别」读取当前聊天"
+            )
+        log.info("采集节奏切换：%s", capture_preset_key(self.cfg))
+
+    def _on_auto_suggest_changed(self, key: str) -> None:
+        """切换自动生成候选的触发时机。"""
+        self._touch()
+        if key not in {mode for mode, _label in AUTO_SUGGEST_MODES}:
+            return
+        self.cfg.ui.auto_suggest = key
+        self._save_config()
+        self.overlay.set_capture_state(
+            capture_preset_key(self.cfg), self.cfg.capture.interval_ms, key
+        )
+        text = {
+            "new": "每条新消息自动生成候选",
+            "session": "只在切换会话时生成候选",
+            "manual": "不自动生成候选，点「立即识别」才生成",
+        }[key]
+        self.overlay.set_status("ok", f"自动生成：{text}")
+        log.info("自动生成候选模式：%s", key)
+
+    def _save_config(self) -> None:
+        try:
+            self.cfg.save(Path(self.cfg.data_dir) / "config.json")
+        except Exception as exc:
+            log.warning("保存配置失败：%s", exc)
 
     def _on_pin_toggled(self, pinned: bool) -> None:
         self.cfg.ui.auto_hide = not pinned
