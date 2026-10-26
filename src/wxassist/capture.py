@@ -219,10 +219,15 @@ class WgcCapturer:
 
     回调线程只保存最新一帧；调用方用 seq 判断是否有新画面，
     避免重复 OCR 同一帧。
+
+    ``minimum_update_interval`` 是毫秒级节流：WGC 默认按显示器刷新率出帧
+    （60/120/144fps），即使画面不变也在持续拷贝整窗像素。按采集间隔节流后
+    像素搬运降到 ~1~2fps，而处理层本来就是这个节奏，体验没有损失。
     """
 
-    def __init__(self, hwnd: int) -> None:
+    def __init__(self, hwnd: int, minimum_update_interval: int | None = None) -> None:
         self.hwnd = hwnd
+        self.minimum_update_interval = minimum_update_interval
         self._lock = threading.Lock()
         self._latest: np.ndarray | None = None
         self._seq = 0
@@ -236,11 +241,14 @@ class WgcCapturer:
         except Exception as exc:  # pragma: no cover - 依赖缺失
             raise CaptureError(f"未安装 windows-capture：{exc}") from exc
 
-        capture = WindowsCapture(
-            cursor_capture=False,
-            draw_border=False,
-            window_hwnd=self.hwnd,
-        )
+        kwargs: dict = {"cursor_capture": False, "draw_border": False, "window_hwnd": self.hwnd}
+        if self.minimum_update_interval:
+            kwargs["minimum_update_interval"] = int(self.minimum_update_interval)
+        try:
+            capture = WindowsCapture(**kwargs)
+        except TypeError:  # pragma: no cover - 老版本没有节流参数
+            kwargs.pop("minimum_update_interval", None)
+            capture = WindowsCapture(**kwargs)
 
         @capture.event
         def on_frame_arrived(frame, _control) -> None:  # pragma: no cover - 回调
@@ -280,16 +288,21 @@ class WgcCapturer:
                 pass
 
 
-def create_capturer(win: WeChatWindow) -> tuple[object, str]:
-    """返回 (capturer, mode)。mode ∈ {"wgc", "gdi"}。"""
+def create_capturer(
+    win: WeChatWindow, minimum_update_interval: int | None = None
+) -> tuple[object, str]:
+    """返回 (capturer, mode)。mode ∈ {"wgc", "gdi"}。
+
+    minimum_update_interval 只在 WGC 下生效（毫秒），用于把抓帧降到处理节奏。
+    """
     try:
-        return WgcCapturer(win.hwnd), "wgc"
+        return WgcCapturer(win.hwnd, minimum_update_interval=minimum_update_interval), "wgc"
     except CaptureError:
         return None, "gdi"
 
 
 def grab_window(win: WeChatWindow, timeout: float = 2.5) -> tuple[np.ndarray, str]:
-    """一次性取一帧（自检/调试用）。返回 (RGB ndarray, mode)。"""
+    """一次性取一帧（自检/调试/手动识别用）。返回 (RGB ndarray, mode)。"""
     try:
         capturer = WgcCapturer(win.hwnd)
     except CaptureError:

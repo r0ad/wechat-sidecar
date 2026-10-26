@@ -19,6 +19,7 @@ from .capture import (
     create_capturer,
     find_window,
     grab_client,
+    grab_window,
     is_covered,
     is_foreground,
     is_minimized,
@@ -32,6 +33,8 @@ from .store import Store
 from .tracker import SessionTracker
 
 SIGNATURE_THRESHOLD = 2.0
+MANUAL_COOLDOWN_SEC = 1.0  # 手动识别连点冷却，避免一次点击发两次模型请求
+WGC_RETRY_SEC = 30.0  # GDI 兜底时多久重试一次 WGC
 
 
 class Pipeline:
@@ -68,10 +71,14 @@ class Pipeline:
         self._capturer = None
         self._capture_mode = ""
         self._capture_hwnd: int | None = None
+        self._capture_interval = 0
+        self._capture_ts = 0.0
         self._last_seq = -1
         self._io_lock = threading.Lock()
 
         self._baseline_ts = 0.0
+        self._last_frame_ts = time.time()
+        self._last_manual_ts = 0.0
         self._pending: list[Message] = []
         self._pending_at = 0.0
         try:
@@ -130,11 +137,17 @@ class Pipeline:
     # ---------- 主循环 ----------
 
     def _run(self) -> None:
-        interval = max(0.25, self.cfg.capture.interval_ms / 1000.0)
         while not self._stop.is_set():
             started = time.perf_counter()
             try:
                 if self._paused.is_set():
+                    time.sleep(0.2)
+                    continue
+                if not self.cfg.capture.auto_capture:
+                    self._status(
+                        "wait",
+                        "仅手动识别：点「立即识别」或按 Ctrl+Alt+K 读取当前聊天",
+                    )
                     time.sleep(0.2)
                     continue
                 self._tick()
@@ -148,8 +161,29 @@ class Pipeline:
             except Exception as exc:  # pragma: no cover - 保护线程
                 self._status("error", f"采集异常：{exc}")
                 time.sleep(0.3)
-            elapsed = time.perf_counter() - started
-            time.sleep(max(0.05, interval - elapsed))
+            interval = self._next_interval()
+            time.sleep(max(0.05, interval - (time.perf_counter() - started)))
+
+    def _next_interval(self) -> float:
+        """采样间隔：正常情况下用配置值，微信不在前台且画面久未变化时降频。
+
+        降频只影响「什么时候再去看一眼」，不影响新消息识别的正确性；
+        画面一变（WGC 出新帧）就立刻恢复。
+        """
+        base = max(0.25, self.cfg.capture.interval_ms / 1000.0)
+        backoff = self.cfg.capture.idle_backoff_sec
+        if backoff <= 0:
+            return base
+        if time.time() - self._last_frame_ts < backoff:
+            return base
+        win = self._last_window
+        if win is not None:
+            try:
+                if is_foreground(win.hwnd):
+                    return base
+            except Exception:
+                return base
+        return max(base, self.cfg.capture.idle_interval_ms / 1000.0)
 
     def _tick(self) -> None:
         if not self._io_lock.acquire(blocking=False):
@@ -173,7 +207,10 @@ class Pipeline:
         height, width = image.shape[:2]
         region = compute_region(width, height, win.dpi_scale(), self.cfg.capture)
 
-        if self.cfg.capture.require_send_button and not self._is_chat_view(image, region):
+        _lines, panel_lines, footer_lines = self._ocr_split(image, region)
+        if self.cfg.capture.require_send_button and not is_chat_view(
+            region, height, footer_lines
+        ):
             self._tracker = None
             self._pending.clear()
             self._status(
@@ -182,10 +219,7 @@ class Pipeline:
             )
             return
 
-        lines = self._ocr.recognize(
-            image, bbox=(region.chat_left, 0, width, region.input_top)
-        )
-        result = self._parser.parse(lines, image, region)
+        result = self._parser.parse(panel_lines, image, region)
         session = self._resolve_session(result.session)
         self._session = session
         self._capture_mode = mode
@@ -198,7 +232,7 @@ class Pipeline:
             self._baseline_ts = time.time()
             self.on_session(session)
             self._status("ok", f"监听中 · {session}（{_mode_text(mode)}）")
-            self.on_debug(session, result, lines, "")
+            self.on_debug(session, result, panel_lines, "")
             return
 
         if session != self._tracker.session:
@@ -209,12 +243,12 @@ class Pipeline:
             self.on_session(session)
             stored = self.store.count_messages(session)
             self._status("ok", f"已切换会话 · {session}（已读 {stored} 条上下文）")
-            self.on_debug(session, result, lines, "")
+            self.on_debug(session, result, panel_lines, "")
             return
 
         self._confirm_messages(session, result.bubbles)
         new_messages = self._tracker.ingest(result.bubbles, ts=time.time())
-        self.on_debug(session, result, lines, "")
+        self.on_debug(session, result, panel_lines, "")
         if not new_messages:
             self._status("ok", f"监听中 · {session}")
             return
@@ -225,18 +259,18 @@ class Pipeline:
             return
         self._enqueue_incoming(session, incoming)
 
-    def _is_chat_view(self, image, region) -> bool:
-        """聊天页底部输入区一定有「发送」按钮；文章/小程序/朋友圈没有。"""
+    def _ocr_split(self, image, region):
+        """一次 OCR 读完整窗口，再按 y 拆成「聊天面板」和「底部输入区」。
+
+        原来每帧跑两趟 OCR（面板一趟 + 底部「发送」按钮门禁一趟）；
+        合成一趟后单帧 OCR 开销更低，灵敏档才有意义。
+        """
         height, width = image.shape[:2]
-        if region.input_top >= height - 4:
-            return False
-        try:
-            footer_lines = self._ocr.recognize(
-                image, bbox=(region.chat_left, region.input_top, width, height)
-            )
-        except OcrError:
-            return False
-        return footer_has_send(footer_lines)
+        lines = self._ocr.recognize(image, bbox=(region.chat_left, 0, width, height))
+        cut = region.input_top
+        panel = [line for line in lines if line.y0 < cut]
+        footer = [line for line in lines if line.y0 >= cut]
+        return lines, panel, footer
 
     def _resolve_session(self, raw: str) -> str:
         """会话名稳定化：OCR 抖动/图标误识不能把同一个会话拆成多个。"""
@@ -373,22 +407,39 @@ class Pipeline:
 
     # ---------- 采集 ----------
 
-    def _frame(self, win: WeChatWindow) -> tuple[np.ndarray, str] | None:
-        if self._capturer is None or self._capture_hwnd != win.hwnd:
-            self._close_capturer()
-            capturer, mode = create_capturer(win)
-            self._capturer = capturer
-            self._capture_mode = mode
-            self._capture_hwnd = win.hwnd
-            self._last_seq = -1
-            self._last_signature = None
+    def _ensure_capturer(self, win: WeChatWindow) -> None:
+        """按当前窗口和节奏准备采集器；GDI 兜底不每个 tick 重试 WGC。"""
+        interval_ms = int(max(250, self.cfg.capture.interval_ms))
+        if self._capture_hwnd == win.hwnd:
+            if self._capture_mode == "gdi":
+                if time.time() - self._capture_ts < WGC_RETRY_SEC:
+                    return
+            elif self._capturer is not None and self._capture_interval != interval_ms:
+                self._close_capturer()  # 节奏变了：按新间隔重建（节流参数只在创建时生效）
+            elif self._capturer is not None:
+                return
+        self._close_capturer()
+        capturer, mode = create_capturer(win, minimum_update_interval=interval_ms)
+        self._capturer = capturer
+        self._capture_mode = mode
+        self._capture_hwnd = win.hwnd
+        self._capture_interval = interval_ms
+        self._capture_ts = time.time()
+        self._last_seq = -1
+        self._last_signature = None
+
+    def _frame(
+        self, win: WeChatWindow, force: bool = False
+    ) -> tuple[np.ndarray, str] | None:
+        """取一帧；force=True 时忽略「画面没变」判断（手动识别用）。"""
+        self._ensure_capturer(win)
 
         if self._capture_mode == "wgc" and self._capturer is not None:
             got = self._capturer.grab()
             if got is None:
                 return None
             image, seq = got
-            if seq == self._last_seq:
+            if seq == self._last_seq and not force:
                 return None
             self._last_seq = seq
             client_w, client_h = win.client_size()
@@ -396,11 +447,14 @@ class Pipeline:
                 self._close_capturer()
                 raise CaptureError("采集画面尺寸异常（窗口可能刚还原或缩放），正在重新连接…")
             signature = _signature(image)
-            if self._last_signature is not None and _similar(
-                self._last_signature, signature, SIGNATURE_THRESHOLD
+            if (
+                not force
+                and self._last_signature is not None
+                and _similar(self._last_signature, signature, SIGNATURE_THRESHOLD)
             ):
                 return None
             self._last_signature = signature
+            self._last_frame_ts = time.time()
             return image, "wgc"
 
         # GDI 兜底：只能读屏幕可见像素，所以必须确认微信真的在最上层
@@ -410,11 +464,14 @@ class Pipeline:
             )
         image = grab_client(win)
         signature = _signature(image)
-        if self._last_signature is not None and _similar(
-            self._last_signature, signature, SIGNATURE_THRESHOLD
+        if (
+            not force
+            and self._last_signature is not None
+            and _similar(self._last_signature, signature, SIGNATURE_THRESHOLD)
         ):
             return None
         self._last_signature = signature
+        self._last_frame_ts = time.time()
         return image, "gdi"
 
     def _close_capturer(self) -> None:
@@ -427,12 +484,105 @@ class Pipeline:
         self._capture_hwnd = None
         self._last_seq = -1
 
+    # ---------- 手动识别 ----------
+
+    def apply_capture_mode(self) -> None:
+        """运行中改了采集节奏：立即生效；切到仅手动时释放采集器（不再后台截屏）。"""
+        if not self.cfg.capture.auto_capture:
+            # 等采集线程当前这一帧处理完再释放，避免和 grab 抢同一句柄
+            if self._io_lock.acquire(timeout=1.0):
+                try:
+                    self._close_capturer()
+                finally:
+                    self._io_lock.release()
+            else:
+                self._close_capturer()
+            self._pending.clear()
+            self._status("wait", "仅手动识别：点「立即识别」或按 Ctrl+Alt+K 读取当前聊天")
+            return
+        self._last_frame_ts = time.time()
+        self._status("ok", "监听中")
+
+    def capture_once(self, analyze: bool = True) -> bool:
+        """手动识别：立刻抓当前帧 → OCR → 入上下文 → 生成候选。
+
+        与自动采集共用解析/门禁/去重逻辑，区别是：强制取帧（绕过「画面没变」判断）、
+        单帧即入库（不等两帧确认），并且在「仅手动」模式或暂停状态下也能用。
+        返回 False 表示连点被冷却挡掉了。
+        """
+        now = time.time()
+        if now - self._last_manual_ts < MANUAL_COOLDOWN_SEC:
+            return False
+        self._last_manual_ts = now
+        if not self._io_lock.acquire(timeout=2.5):
+            raise CaptureError("采集正忙，请稍后再试")
+        try:
+            session = self._capture_once_locked()
+        finally:
+            self._io_lock.release()
+        # 模型调用不占采集锁：别让一次识别把自动采集卡住几秒
+        if analyze and session:
+            self.analyze_now(session)
+        return True
+
+    def _manual_frame(self, win: WeChatWindow) -> tuple[np.ndarray, str]:
+        """手动取帧：优先等一帧新画面，取不到就用当前最新帧；没有采集器时单次抓取。"""
+        if self._capturer is not None and self._capture_hwnd == win.hwnd:
+            image = self._next_frame(win, timeout=0.8)
+            if image is not None:
+                self._last_frame_ts = time.time()
+                return image, self._capture_mode
+            got = self._frame(win, force=True)
+            if got is not None:
+                return got
+        return grab_window(win)
+
+    def _capture_once_locked(self) -> str:
+        win = find_window()
+        self._last_window = win
+        if is_minimized(win):
+            raise CaptureError("微信窗口已最小化，请先还原窗口")
+
+        image, mode = self._manual_frame(win)
+        height, width = image.shape[:2]
+        region = compute_region(width, height, win.dpi_scale(), self.cfg.capture)
+        _lines, panel_lines, footer_lines = self._ocr_split(image, region)
+        if self.cfg.capture.require_send_button and not is_chat_view(
+            region, height, footer_lines
+        ):
+            raise CaptureError("当前微信不是聊天页面（可能是公众号/文章/小程序），请回到聊天页")
+
+        result = self._parser.parse(panel_lines, image, region)
+        session = self._resolve_session(result.session)
+        self._session = session
+        self._capture_mode = mode
+        self._baseline_ts = time.time()
+        self._last_frame_ts = time.time()
+        if self._tracker is None:
+            self._tracker = SessionTracker(session)
+        elif session != self._tracker.session:
+            self._tracker.switch_session(session, result.bubbles)
+        self._tracker.ingest(result.bubbles, ts=time.time())
+        self._persist_bubbles(session, result.bubbles)
+        self._pending.clear()  # 手动已经分析过，别让防抖队列再触发一次
+        self._reset_confirm(session, result.bubbles)
+        self.on_session(session)
+        self.on_debug(session, result, panel_lines, "")
+        if not result.bubbles:
+            self._status("wait", "没读到聊天内容：确认微信停在聊天页、窗口不要最小化")
+            return ""
+        return session
+
     # ---------- 工具 ----------
 
     def _enqueue_incoming(self, session: str, incoming: list[Message]) -> None:
         # 启动后的前几秒画面可能还在渲染，先当基线，避免一上来就误报
         if time.time() - self._baseline_ts < self.cfg.capture.startup_warmup_sec:
             self._status("ok", f"监听中 · {session}（画面稳定中）")
+            return
+        if self.cfg.ui.auto_suggest != "new":
+            hint = "切会话时生成" if self.cfg.ui.auto_suggest == "session" else "点「立即识别」生成"
+            self._status("ok", f"监听中 · {session}（已读入新消息，{hint}）")
             return
         self._pending = (self._pending + incoming)[-5:]
         self._pending_at = time.time()
@@ -536,6 +686,13 @@ def footer_has_send(lines) -> bool:
         if any(marker in text for marker in SEND_TEXTS):
             return True
     return False
+
+
+def is_chat_view(region: ChatRegion, height: int, footer_lines) -> bool:
+    """聊天页底部一定有「发送」按钮；文章/小程序/朋友圈没有。"""
+    if region.input_top >= height - 4:
+        return False
+    return footer_has_send(footer_lines)
 
 
 def _name_key(name: str) -> str:

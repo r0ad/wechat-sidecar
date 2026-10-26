@@ -7,8 +7,9 @@ import pytest
 
 from wxassist.config import Config
 from wxassist.filler import FillError, copy_to_clipboard, input_box_point
-from wxassist.layout import compute_region
-from wxassist.pipeline import _signature, _similar
+from wxassist.layout import ChatRegion, compute_region
+from wxassist.models import OcrLine
+from wxassist.pipeline import _signature, _similar, is_chat_view
 
 
 class FakeWindow:
@@ -70,6 +71,18 @@ def test_signature_and_similarity() -> None:
     changed[40:, :] = 200
     assert _similar(_signature(a), _signature(same))
     assert not _similar(_signature(a), _signature(changed))
+
+
+def test_chat_view_needs_send_button_in_footer() -> None:
+    cfg = Config.load(None)
+    region = compute_region(841, 716, 1.0, cfg.capture)
+    send = OcrLine(text="发送", score=0.99, x0=700, y0=620, x1=760, y1=650)
+    assert is_chat_view(region, 716, [send])
+    assert not is_chat_view(region, 716, [])  # 文章/小程序没有「发送」
+
+    # 窗口太矮时输入区被挤没（input_top 贴到底部），判定为不是聊天页
+    squashed = ChatRegion(chat_left=180, header_bottom=32, input_top=200)
+    assert not is_chat_view(squashed, 200, [send])
 
 
 def test_copy_to_clipboard_roundtrip() -> None:

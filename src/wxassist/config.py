@@ -10,6 +10,22 @@ from typing import Any
 
 APP_NAME = "wxassist"
 
+# 采集节奏预设：key → (显示名, 采样间隔, 是否后台自动采集)
+# 「仅手动」= 完全不后台截屏，只有点「立即识别」/热键时才抓一帧。
+CAPTURE_PRESETS: tuple[tuple[str, str, int, bool], ...] = (
+    ("sensitive", "灵敏", 400, True),
+    ("balanced", "均衡", 700, True),
+    ("saver", "省电", 1500, True),
+    ("manual", "仅手动", 700, False),
+)
+
+# 自动生成候选的触发时机：新消息就生成 / 只在切会话时 / 完全不自动
+AUTO_SUGGEST_MODES: tuple[tuple[str, str], ...] = (
+    ("new", "每条新消息"),
+    ("session", "仅切会话"),
+    ("manual", "仅手动"),
+)
+
 
 def default_data_dir() -> Path:
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
@@ -32,6 +48,9 @@ class LLMConfig:
 @dataclass
 class CaptureConfig:
     interval_ms: int = 700
+    auto_capture: bool = True  # False = 仅手动识别：不后台截屏，点按钮/热键才抓一帧
+    idle_backoff_sec: float = 10.0  # 微信不在前台且画面静默这么久后降频（0 = 关闭）
+    idle_interval_ms: int = 1500  # 降频后的采样间隔
     # 微信 4.x 布局是固定像素（会随系统 DPI 缩放），优先用 px 计算
     chat_left_px: int = 300  # 图标栏 + 会话列表宽度
     header_px: int = 64  # 聊天面板顶部标题栏高度
@@ -72,11 +91,13 @@ class PersonaConfig:
 @dataclass
 class UIConfig:
     hotkey: str = "ctrl+alt+j"
+    manual_hotkey: str = "ctrl+alt+k"  # 立即识别：截当前帧 + OCR + 生成候选
     always_on_top: bool = True
     opacity: float = 0.97
     auto_hide: bool = True  # 微信不在前台时自动收起悬浮窗
     follow_wechat: bool = True  # 悬浮窗跟随微信窗口移动
     auto_proactive: bool = True  # 切到新会话且没有新消息时，自动基于当前对话生成候选
+    auto_suggest: str = "new"  # new | session | manual：自动生成候选的触发时机
 
 
 @dataclass
@@ -153,3 +174,37 @@ class Config:
 
     def db_path(self) -> Path:
         return Path(self.data_dir) / "wxassist.db"
+
+
+# ---------- 采集节奏 ----------
+
+
+def capture_preset_key(cfg: Config) -> str:
+    """当前配置对应哪个节奏预设；自定义间隔返回 "custom"。"""
+    if not cfg.capture.auto_capture:
+        return "manual"
+    for key, _label, interval_ms, auto in CAPTURE_PRESETS:
+        if auto and cfg.capture.interval_ms == interval_ms:
+            return key
+    return "custom"
+
+
+def apply_capture_preset(cfg: Config, key: str) -> bool:
+    """把节奏预设写进配置；未知 key 返回 False。"""
+    for preset_key, _label, interval_ms, auto in CAPTURE_PRESETS:
+        if preset_key != key:
+            continue
+        cfg.capture.interval_ms = interval_ms
+        cfg.capture.auto_capture = auto
+        return True
+    return False
+
+
+def preset_label(cfg: Config) -> str:
+    """节奏的显示文案，例如「均衡 0.7s」「仅手动」。"""
+    key = capture_preset_key(cfg)
+    for preset_key, label, interval_ms, auto in CAPTURE_PRESETS:
+        if preset_key != key:
+            continue
+        return label if not auto else f"{label} {interval_ms / 1000:.1f}s"
+    return f"自定义 {cfg.capture.interval_ms / 1000:.1f}s"

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 
-from wxassist.config import Config
+from wxassist.config import (
+    Config,
+    apply_capture_preset,
+    capture_preset_key,
+    preset_label,
+)
 from wxassist.models import Bubble, Message
 from wxassist.providers import PRESETS, detect_provider, get_preset
 
@@ -74,3 +79,49 @@ def test_detect_provider_from_base_url() -> None:
     assert detect_provider("https://api.deepseek.com/v1", "deepseek-flash") == "deepseek"
     assert detect_provider("https://api.openai.com/v1/", "gpt-6-luna") == "openai"
     assert detect_provider("https://example.com/v1", "x") == "custom"
+
+
+def test_capture_preset_roundtrip() -> None:
+    cfg = Config.load(None)
+    assert capture_preset_key(cfg) == "balanced"  # 默认 700ms
+    assert preset_label(cfg) == "均衡 0.7s"
+
+    assert apply_capture_preset(cfg, "manual") is True
+    assert cfg.capture.auto_capture is False
+    assert capture_preset_key(cfg) == "manual"
+    assert preset_label(cfg) == "仅手动"
+
+    assert apply_capture_preset(cfg, "sensitive") is True
+    assert cfg.capture.interval_ms == 400 and cfg.capture.auto_capture is True
+    assert apply_capture_preset(cfg, "no-such-preset") is False
+
+
+def test_capture_preset_custom_interval_label() -> None:
+    cfg = Config.load(None)
+    cfg.capture.interval_ms = 900
+    cfg.capture.auto_capture = True
+    assert capture_preset_key(cfg) == "custom"
+    assert preset_label(cfg) == "自定义 0.9s"
+
+
+def test_new_capture_and_ui_fields_merge(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "capture": {
+                    "auto_capture": False,
+                    "idle_backoff_sec": 3,
+                    "idle_interval_ms": 2000,
+                },
+                "ui": {"auto_suggest": "manual", "manual_hotkey": "ctrl+alt+l"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config.load(path)
+    assert cfg.capture.auto_capture is False
+    assert cfg.capture.idle_backoff_sec == 3
+    assert cfg.capture.idle_interval_ms == 2000
+    assert cfg.ui.auto_suggest == "manual"
+    assert cfg.ui.manual_hotkey == "ctrl+alt+l"
