@@ -10,6 +10,9 @@
   },
   "capture": {
     "interval_ms": 700,
+    "auto_capture": true,
+    "idle_backoff_sec": 10.0,
+    "idle_interval_ms": 1500,
     "chat_left_px": 300,
     "header_px": 64,
     "input_px": 160,
@@ -39,11 +42,13 @@
   },
   "ui": {
     "hotkey": "ctrl+alt+j",
+    "manual_hotkey": "ctrl+alt+k",
     "always_on_top": true,
     "opacity": 0.97,
     "auto_hide": true,
     "follow_wechat": true,
-    "auto_proactive": true
+    "auto_proactive": true,
+    "auto_suggest": "new"
   },
   "filler": {
     "mode": "copy",
