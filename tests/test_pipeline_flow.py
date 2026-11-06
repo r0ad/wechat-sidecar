@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import wxassist.pipeline as pipeline_mod
-from wxassist.config import Config
+from wxassist.config import CaptureConfig, Config
 from wxassist.engine import SuggestEngine
 from wxassist.layout import compute_region
 from wxassist.llm import LLMClient
@@ -141,10 +141,11 @@ def test_pipeline_ignores_own_messages_and_session_switch(monkeypatch, tmp_path)
 
 
 def test_region_matches_synthetic_layout() -> None:
-    cfg = Config.load(None)
-    region = compute_region(WIDTH, HEIGHT, 1.0, cfg.capture)
+    # 用配置类默认值，避免本机 config.json 里的像素值影响断言
+    capture = CaptureConfig()
+    region = compute_region(WIDTH, HEIGHT, 1.0, capture)
     assert region.chat_left == 300
-    assert region.input_top == HEIGHT - cfg.capture.input_px
+    assert region.input_top == HEIGHT - capture.input_px
 
 
 def test_session_switch_persists_visible_context(monkeypatch, tmp_path) -> None:

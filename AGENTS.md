@@ -286,6 +286,8 @@ python build.py --console             # 仅排查启动问题时用
 | `tests/test_cli.py` | 单实例文件锁 |
 
 **测试禁止**：打开真实微信窗口、调用外部 API、读写真实用户数据目录。
+几何/像素断言（区域、输入区高度、气泡坐标）一律用 `CaptureConfig()` 等配置类的**默认值**，
+不要用 `Config.load(None)`：它会读本机 `config.json`，本机改过的值会让用例"假通过"，CI 上照样挂。
 
 ---
 

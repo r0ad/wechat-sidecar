@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from wxassist.config import Config
+from wxassist.config import CaptureConfig, Config
 from wxassist.filler import FillError, copy_to_clipboard, input_box_point
 from wxassist.layout import ChatRegion, compute_region
 from wxassist.models import OcrLine
@@ -38,15 +38,16 @@ def test_input_box_point_with_dpi_and_pixels() -> None:
 
 
 def test_region_uses_pixels_scaled_by_dpi() -> None:
-    cfg = Config.load(None)
-    region = compute_region(841, 716, 1.0, cfg.capture)
+    # 用配置类默认值，避免本机 config.json 里的 input_px 让断言"假通过"
+    capture = CaptureConfig()
+    region = compute_region(841, 716, 1.0, capture)
     assert region.chat_left == 300
     assert region.header_bottom == 64
-    assert region.input_top == 716 - cfg.capture.input_px
-    scaled = compute_region(1051, 895, 1.25, cfg.capture)
+    assert region.input_top == 716 - capture.input_px
+    scaled = compute_region(1051, 895, 1.25, capture)
     assert scaled.chat_left == 375
     assert scaled.header_bottom == 80
-    assert scaled.input_top == 895 - 200
+    assert scaled.input_top == 895 - int(capture.input_px * 1.25)
 
 
 def test_region_falls_back_to_ratios_without_dpi() -> None:
