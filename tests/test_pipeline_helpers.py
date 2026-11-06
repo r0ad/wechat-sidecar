@@ -42,7 +42,7 @@ def test_region_uses_pixels_scaled_by_dpi() -> None:
     region = compute_region(841, 716, 1.0, cfg.capture)
     assert region.chat_left == 300
     assert region.header_bottom == 64
-    assert region.input_top == 716 - 160
+    assert region.input_top == 716 - cfg.capture.input_px
     scaled = compute_region(1051, 895, 1.25, cfg.capture)
     assert scaled.chat_left == 375
     assert scaled.header_bottom == 80

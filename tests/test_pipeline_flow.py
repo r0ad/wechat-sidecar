@@ -144,7 +144,7 @@ def test_region_matches_synthetic_layout() -> None:
     cfg = Config.load(None)
     region = compute_region(WIDTH, HEIGHT, 1.0, cfg.capture)
     assert region.chat_left == 300
-    assert region.input_top == HEIGHT - 160
+    assert region.input_top == HEIGHT - cfg.capture.input_px
 
 
 def test_session_switch_persists_visible_context(monkeypatch, tmp_path) -> None:
