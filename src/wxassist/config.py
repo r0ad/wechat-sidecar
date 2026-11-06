@@ -54,7 +54,7 @@ class CaptureConfig:
     # 微信 4.x 布局是固定像素（会随系统 DPI 缩放），优先用 px 计算
     chat_left_px: int = 300  # 图标栏 + 会话列表宽度
     header_px: int = 64  # 聊天面板顶部标题栏高度
-    input_px: int = 160  # 底部输入区高度
+    input_px: int = 133  # 底部输入区高度（微信 4.x：白框 + 工具条，125% 下实测 166px）
     # DPI 未知时的兜底比例
     chat_left_ratio: float = 0.26
     header_bottom_ratio: float = 0.10
@@ -66,6 +66,9 @@ class CaptureConfig:
     load_more_pages: int = 3  # 「读取更多」向上翻几屏
     require_send_button: bool = True  # 只在聊天页（底部有「发送」）读取，避免把文章/小程序当聊天
     filter_garbled: bool = True  # 过滤图片/表情里读出来的乱码，别当成对方消息
+    filter_non_dialogue: bool = True  # 过滤语音时长/占位符/文件卡/文章卡等非对话内容
+    filter_media: bool = True  # 整框丢弃图片/卡片气泡里的字（图片里的中文不是对方原话）
+    filter_quote: bool = True  # 剥离引用块内容，引用的话不再当成新消息
 
 
 @dataclass

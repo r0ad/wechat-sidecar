@@ -9,7 +9,7 @@ from wxassist.config import Config
 from wxassist.filler import FillError, copy_to_clipboard, input_box_point
 from wxassist.layout import ChatRegion, compute_region
 from wxassist.models import OcrLine
-from wxassist.pipeline import _signature, _similar, is_chat_view
+from wxassist.pipeline import _reply_lines_after_quote, _signature, _similar, is_chat_view
 
 
 class FakeWindow:
@@ -85,6 +85,28 @@ def test_chat_view_needs_send_button_in_footer() -> None:
     assert not is_chat_view(squashed, 200, [send])
 
 
+def test_chat_view_requires_exact_send_line() -> None:
+    """底部有含「发送」的长句（悬浮窗免责声明）不算聊天页；发送(S) 可以。"""
+    cfg = Config.load(None)
+    region = compute_region(841, 716, 1.0, cfg.capture)
+    disclaimer = OcrLine(
+        text="只读屏幕 OCR，永不自动发送，发消息前请自己核对",
+        score=0.99,
+        x0=320,
+        y0=640,
+        x1=820,
+        y1=660,
+    )
+    assert not is_chat_view(region, 716, [disclaimer])
+
+    hotkey = OcrLine(text="发送(S)", score=0.99, x0=700, y0=620, x1=780, y1=650)
+    assert is_chat_view(region, 716, [hotkey])
+
+    # 文章页底部：有「发送」评论按钮，但也有「写留言/阅读原文」这类词
+    article = OcrLine(text="写留言", score=0.99, x0=600, y0=640, x1=680, y1=660)
+    assert not is_chat_view(region, 716, [hotkey, article])
+
+
 def test_copy_to_clipboard_roundtrip() -> None:
     try:
         copy_to_clipboard("wxassist-clipboard-test")
@@ -107,3 +129,28 @@ def test_copy_to_clipboard_roundtrip() -> None:
             win32clipboard.CloseClipboard()
         except Exception:
             pass
+
+
+def _ocr_line(text: str, x0: int, y0: int, x1: int, y1: int) -> OcrLine:
+    return OcrLine(text=text, score=0.99, x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+def test_reply_lines_after_quote_keeps_reply_with_same_geometry() -> None:
+    """引用和回复的 OCR 坐标/字号相同时，不能把回复正文当引用一起删掉。"""
+    lines = [
+        _ocr_line("冯智：数字游民吗？", 320, 300, 500, 322),
+        _ocr_line("服药时最好不要吃柚子", 320, 324, 500, 346),
+    ]
+    kept = _reply_lines_after_quote(lines)
+    assert [line.text for line in kept] == ["服药时最好不要吃柚子"]
+
+
+def test_reply_lines_after_quote_eats_indented_quote_body() -> None:
+    """引用正文本来就缩进，可以跟着首行一起剥掉，后面的回复保留。"""
+    lines = [
+        _ocr_line("随遇而安：经济师是怎么个说法呢", 320, 300, 520, 320),
+        _ocr_line("中级经济师分两个专业", 330, 322, 520, 342),
+        _ocr_line("我今年准备考", 320, 346, 430, 368),
+    ]
+    kept = _reply_lines_after_quote(lines)
+    assert [line.text for line in kept] == ["我今年准备考"]

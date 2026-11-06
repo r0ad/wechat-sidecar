@@ -125,3 +125,28 @@ def test_new_capture_and_ui_fields_merge(tmp_path) -> None:
     assert cfg.capture.idle_interval_ms == 2000
     assert cfg.ui.auto_suggest == "manual"
     assert cfg.ui.manual_hotkey == "ctrl+alt+l"
+
+def test_input_area_height_matches_wechat_4x() -> None:
+    """125% DPI 实测：底部输入区 166 物理像素 = 133 逻辑像素。
+
+    这个值同时决定「面板/输入区」的切分线和「填入」时点的输入框中心；
+    设成 160 会把最新几条消息切进输入区，导致漏读。
+    """
+    import inspect
+
+    from wxassist import filler
+    from wxassist.config import CaptureConfig
+
+    assert CaptureConfig().input_px == 133
+    assert inspect.signature(filler.input_box_point).parameters["input_px"].default == 133
+    assert inspect.signature(filler.fill).parameters["input_px"].default == 133
+
+
+def test_non_dialogue_filters_default_on() -> None:
+    """三层过滤默认全开，用户可以在配置里关掉。"""
+    from wxassist.config import CaptureConfig
+
+    cfg = CaptureConfig()
+    assert cfg.filter_non_dialogue is True
+    assert cfg.filter_media is True
+    assert cfg.filter_quote is True

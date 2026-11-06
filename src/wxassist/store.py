@@ -9,7 +9,12 @@ import time
 from pathlib import Path
 
 from .models import Analysis, Message
-from .text_quality import looks_like_garbled
+from .text_quality import (
+    looks_like_garbled,
+    looks_like_non_dialogue,
+    normalize_for_match,
+    quote_echo_content,
+)
 
 
 SCHEMA = """
@@ -195,6 +200,54 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT id, text FROM messages").fetchall()
             bad = [int(row["id"]) for row in rows if looks_like_garbled(row["text"])]
+            if not bad:
+                return 0
+            self._conn.executemany("DELETE FROM messages WHERE id = ?", [(i,) for i in bad])
+            self._conn.commit()
+        return len(bad)
+
+    def purge_non_dialogue_messages(self) -> int:
+        """删掉历史上被误识别的非对话内容（语音时长/占位符/文件卡/文章卡）。
+
+        和乱码清理同理：解析阶段已经拦住它们，这一步只清理老库，避免重启后
+        「对方最新消息」还显示 `10"`、「公众号名片」这类东西。
+        """
+        with self._lock:
+            rows = self._conn.execute("SELECT id, text FROM messages").fetchall()
+            bad = [int(row["id"]) for row in rows if looks_like_non_dialogue(row["text"])]
+            if not bad:
+                return 0
+            self._conn.executemany("DELETE FROM messages WHERE id = ?", [(i,) for i in bad])
+            self._conn.commit()
+        return len(bad)
+
+    def purge_quote_echoes(self) -> int:
+        """删掉历史里的「引用块回声」：单行引用头，内容与同会话更早消息完全重复。
+
+        多行的「引用条 + 回复」不能整条删——回复正文是真内容，删了就永久丢了；
+        这类只在采集时由 `pipeline._filter_quote_echoes` 剥掉引用行。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, session, text FROM messages ORDER BY session, seq, id"
+            ).fetchall()
+            known: dict[str, list[str]] = {}
+            bad: list[int] = []
+            for row in rows:
+                session = row["session"]
+                text = row["text"]
+                remembered = known.setdefault(session, [])
+                content = quote_echo_content(text)
+                normalized = normalize_for_match(content)
+                single_line = len((text or "").strip().splitlines()) == 1
+                if (
+                    single_line
+                    and len(normalized) >= 6
+                    and normalized in remembered
+                ):
+                    bad.append(int(row["id"]))
+                    continue
+                remembered.append(normalize_for_match(text))
             if not bad:
                 return 0
             self._conn.executemany("DELETE FROM messages WHERE id = ?", [(i,) for i in bad])

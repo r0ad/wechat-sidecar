@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 import threading
 import time
 
@@ -27,9 +28,10 @@ from .capture import (
 from .config import Config
 from .engine import SuggestEngine
 from .layout import BubbleParser, ChatRegion, compute_region
-from .models import Analysis, Message
+from .models import Analysis, Bubble, Message, OcrLine
 from .ocr import OcrEngine, OcrError
 from .store import Store
+from .text_quality import matches_known_quote, normalize_for_match, quote_echo_content
 from .tracker import SessionTracker
 
 SIGNATURE_THRESHOLD = 2.0
@@ -81,6 +83,8 @@ class Pipeline:
         self._last_manual_ts = 0.0
         self._pending: list[Message] = []
         self._pending_at = 0.0
+        self._known_texts: list[str] = []
+        self._known_texts_session = ""
         try:
             self._known_sessions: list[str] = store.sessions()
         except Exception:
@@ -223,6 +227,9 @@ class Pipeline:
         session = self._resolve_session(result.session)
         self._session = session
         self._capture_mode = mode
+        # 引用块回声（名字：旧消息）不是新消息，剥掉后再进上下文
+        if self.cfg.capture.filter_quote:
+            result.bubbles = self._filter_quote_echoes(session, result.bubbles)
 
         if self._tracker is None:
             self._tracker = SessionTracker(session)
@@ -347,6 +354,8 @@ class Pipeline:
                         image, bbox=(region.chat_left, 0, width, region.input_top)
                     )
                     result = self._parser.parse(lines, image, region)
+                    if self.cfg.capture.filter_quote:
+                        result.bubbles = self._filter_quote_echoes(session, result.bubbles)
                     collected = list(result.bubbles) + collected
                     if self._resolve_session(result.session) != session:
                         break
@@ -558,6 +567,8 @@ class Pipeline:
         self._capture_mode = mode
         self._baseline_ts = time.time()
         self._last_frame_ts = time.time()
+        if self.cfg.capture.filter_quote:
+            result.bubbles = self._filter_quote_echoes(session, result.bubbles)
         if self._tracker is None:
             self._tracker = SessionTracker(session)
         elif session != self._tracker.session:
@@ -669,6 +680,61 @@ class Pipeline:
         except Exception:
             return 0
 
+    def _filter_quote_echoes(self, session: str, bubbles: list[Bubble]) -> list[Bubble]:
+        """丢掉引用块的「回声」：它只是把旧消息又显示了一遍，不是新消息。
+
+        微信引用消息的引用块经常被 OCR 切成独立气泡（`名字：原消息`）。
+        它和被引用的那条历史消息几乎一样。这里把文本归一化后，和会话历史
+        以及同一帧里的其它气泡比对：只有开头是「名字：」且内容高度重合才丢；
+        多行气泡只剥掉引用那一行，真正的回复正文保留。
+        """
+        known = self._known_text_list(session)
+        visible = [normalize_for_match(bubble.text) for bubble in bubbles]
+        kept: list[Bubble] = []
+        for index, bubble in enumerate(bubbles):
+            content = quote_echo_content(bubble.text)
+            normalized = normalize_for_match(content)
+            if not normalized:
+                kept.append(bubble)
+                continue
+            others = [text for pos, text in enumerate(visible) if pos != index]
+            if not matches_known_quote(normalized, known + others):
+                kept.append(bubble)
+                continue
+            # 引用块可能和回复在同一气泡里：按缩进/字号剥掉引用行，只留回复正文
+            remainder = _reply_lines_after_quote(bubble.lines)
+            if remainder:
+                bubble.lines = remainder
+                bubble.text = "\n".join(
+                    line.text.strip() for line in remainder if line.text.strip()
+                )
+                kept.append(bubble)
+        for bubble in kept:
+            self._remember_text(bubble.text)
+        return kept
+
+    def _known_text_list(self, session: str) -> list[str]:
+        """当前会话最近的消息文本（归一化），用于引用回声比对；按会话缓存。"""
+        if session != self._known_texts_session:
+            self._known_texts_session = session
+            self._known_texts = []
+            try:
+                self._known_texts = [
+                    normalize_for_match(message.text)
+                    for message in self.store.recent_messages(session, 80)
+                ]
+            except Exception:
+                self._known_texts = []
+        return self._known_texts
+
+    def _remember_text(self, text: str) -> None:
+        normalized = normalize_for_match(text)
+        if not normalized or normalized in self._known_texts:
+            return
+        self._known_texts.append(normalized)
+        if len(self._known_texts) > 160:
+            del self._known_texts[:-160]
+
     def _status(self, state: str, message: str) -> None:
         if (state, message) == self._last_status:
             return
@@ -677,13 +743,18 @@ class Pipeline:
         self.on_status(state, message)
 
 
-SEND_TEXTS = ("发送", "发送(", "Send", "send")
+# 发送按钮必须整行就是「发送 / 发送(S) / Send」：文章页、悬浮窗免责声明里
+# 都可能有含「发送」两个字的长句，子串匹配会把它们放进来。
+SEND_LINE_RE = re.compile(
+    r"^\s*(?:发送|Send)\s*(?:[（(]\s*[A-Za-z0-9]{1,4}\s*[)）])?\s*$"
+)
+# 文章/搜一搜/朋友圈页面的底部按钮：聊天页输入区不会有这些词
+PAGE_FOOTER_HINTS = ("写留言", "阅读原文", "相关搜索", "划线账号", "赞赏", "分享到")
 
 
 def footer_has_send(lines) -> bool:
     for line in lines:
-        text = (line.text or "").strip()
-        if any(marker in text for marker in SEND_TEXTS):
+        if SEND_LINE_RE.match((line.text or "").strip()):
             return True
     return False
 
@@ -692,7 +763,31 @@ def is_chat_view(region: ChatRegion, height: int, footer_lines) -> bool:
     """聊天页底部一定有「发送」按钮；文章/小程序/朋友圈没有。"""
     if region.input_top >= height - 4:
         return False
+    texts = [(line.text or "").strip() for line in footer_lines]
+    if any(hint in text for text in texts for hint in PAGE_FOOTER_HINTS):
+        return False
     return footer_has_send(footer_lines)
+
+
+def _reply_lines_after_quote(lines: list[OcrLine]) -> list[OcrLine]:
+    """引用块被剥掉后，气泡里真正回复的行。
+
+    引用块的行紧跟在首行后面、左缩进和字号都跟首行一致；回复正文更靠左
+    （或字号更大）。首行「名字：引用内容」一定丢掉；后续只有「明显更靠右」
+    的行才当引用继续吃，几何上分不清时保留，避免把回复正文一起删掉。
+    全部都是引用时返回空列表。
+    """
+    ordered = sorted(lines, key=lambda line: (line.y0, line.x0))
+    if len(ordered) < 2:
+        return []
+    first = ordered[0]
+    consumed = 1  # 首行本身就是引用头
+    for line in ordered[1:]:
+        if line.x0 >= first.x0 + 6:
+            consumed += 1
+            continue
+        break
+    return ordered[consumed:]
 
 
 def _name_key(name: str) -> str:

@@ -239,3 +239,27 @@ def test_chat_view_gate_blocks_non_chat_page(monkeypatch, tmp_path) -> None:
     assert pipeline._tracker is None
     assert store.sessions() == []
     store.close()
+
+
+def test_quote_echo_is_not_a_new_message(monkeypatch, tmp_path) -> None:
+    """引用块只是把旧消息又显示一遍：不能当成对方来了新消息。"""
+    pipeline, analyses = make_pipeline(monkeypatch, tmp_path)
+
+    frame = base_image()
+    original, frame = bubble(frame, "经济师是怎么个说法呢", 300, is_me=False)
+    pipeline._frame = lambda win: (frame, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("严翁"), original]  # type: ignore[method-assign]
+    pipeline._tick()
+    assert pipeline.store.count_messages("严翁") == 1
+
+    # 新一帧：原消息还在，下面多出一个引用块（名字：旧消息）
+    frame2 = base_image()
+    original2, frame2 = bubble(frame2, "经济师是怎么个说法呢", 300, is_me=False)
+    quote, frame2 = bubble(frame2, "随遇而安：经济师是怎么个说法呢", 380, is_me=False)
+    pipeline._frame = lambda win: (frame2, "wgc")  # type: ignore[method-assign]
+    pipeline._ocr.recognize = lambda image, bbox=None: [header_line("严翁"), original2, quote]  # type: ignore[method-assign]
+    pipeline._tick()
+    pipeline._flush_pending()
+
+    assert analyses == []  # 没有新消息，不触发模型
+    assert pipeline.store.count_messages("严翁") == 1

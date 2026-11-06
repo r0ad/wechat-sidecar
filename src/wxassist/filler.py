@@ -43,7 +43,7 @@ def input_box_point(
     chat_left_px: int = 300,
     dpi_scale: float = 0.0,
     chat_left_ratio: float = 0.26,
-    input_px: int = 160,
+    input_px: int = 133,
 ) -> tuple[int, int]:
     """估算输入框中心点（客户区坐标 → 屏幕坐标）。
 
@@ -88,7 +88,7 @@ def fill(
     chat_left_px: int = 300,
     dpi_scale: float = 0.0,
     chat_left_ratio: float = 0.26,
-    input_px: int = 160,
+    input_px: int = 133,
 ) -> str:
     """返回实际执行的动作：copied / pasted / 失败抛 FillError。"""
     copy_to_clipboard(text)

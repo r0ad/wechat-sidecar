@@ -200,6 +200,15 @@ class AppController:
         purged = self.store.purge_garbled_messages()
         if purged:
             log.info("已清理 %s 条 OCR 乱码记录（图片里的文字被误读，不是真实消息）", purged)
+        # 清理老库要和采集时的开关保持一致：用户关掉过滤，就不能再删他的记录
+        if self.cfg.capture.filter_non_dialogue:
+            purged_media = self.store.purge_non_dialogue_messages()
+            if purged_media:
+                log.info("已清理 %s 条非对话记录（语音时长/占位符/文件卡/文章卡）", purged_media)
+        if self.cfg.capture.filter_quote:
+            purged_quotes = self.store.purge_quote_echoes()
+            if purged_quotes:
+                log.info("已清理 %s 条引用块回声（被引用的旧消息又被显示了一遍）", purged_quotes)
         self.overlay.set_fill_mode(self.cfg.filler.mode)
         self.overlay.set_capture_state(
             capture_preset_key(self.cfg), self.cfg.capture.interval_ms, self.cfg.ui.auto_suggest

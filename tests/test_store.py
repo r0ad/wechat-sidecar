@@ -101,3 +101,68 @@ def test_purge_garbled_messages_keeps_real_text(tmp_path) -> None:
     ]
     assert store.purge_garbled_messages() == 0  # 再跑一次是幂等的
     store.close()
+
+
+def test_purge_non_dialogue_messages(tmp_path) -> None:
+    """老库里的语音时长/文件卡/文章卡要清掉，真实消息不能动。"""
+    store = Store(tmp_path / "t.db")
+    store.add_messages(
+        [
+            Message(session="A", text="好的", is_me=False, ts=1),
+            Message(session="A", text='10"', is_me=False, ts=2),
+            Message(session="A", text="[图片]", is_me=False, ts=3),
+            Message(
+                session="A",
+                text="微信聊天监控与AI回复助手-\n调研报告.md\nMD\n29.2K",
+                is_me=False,
+                ts=4,
+            ),
+            Message(session="A", text="芯和半导体Xpeedic\n公众号名片", is_me=False, ts=5),
+            Message(session="A", text="会议纪要.docx 已经发你了", is_me=False, ts=6),
+        ]
+    )
+    assert store.purge_non_dialogue_messages() == 4
+    assert [m.text for m in store.recent_messages("A", 10)] == [
+        "好的",
+        "会议纪要.docx 已经发你了",
+    ]
+    assert store.purge_non_dialogue_messages() == 0
+    store.close()
+
+
+def test_purge_quote_echoes(tmp_path) -> None:
+    """引用块回声（内容与更早消息重复）清掉；正常消息和普通冒号文本保留。"""
+    store = Store(tmp_path / "t.db")
+    store.add_messages(
+        [
+            Message(session="A", text="经济师是怎么个说法呢", is_me=False, ts=1),
+            Message(session="A", text="随遇而安：经济师是怎么个说法呢", is_me=False, ts=2),
+            Message(session="A", text="注意：明天带伞", is_me=False, ts=3),
+            Message(session="A", text="164:30", is_me=False, ts=4),
+        ]
+    )
+    assert store.purge_quote_echoes() == 1
+    texts = [m.text for m in store.recent_messages("A", 10)]
+    assert "随遇而安：经济师是怎么个说法呢" not in texts
+    assert "注意：明天带伞" in texts
+    store.close()
+
+
+def test_purge_quote_echoes_keeps_multiline_quote_with_reply(tmp_path) -> None:
+    """「引用条 + 回复」是多行气泡，回复是真内容，清理时不能整条删。"""
+    store = Store(tmp_path / "t.db")
+    store.add_messages(
+        [
+            Message(session="A", text="数字游民吗？", is_me=False, ts=1),
+            Message(
+                session="A",
+                text="冯智：数字游民吗？\n服药时最好不要吃柚子",
+                is_me=False,
+                ts=2,
+            ),
+        ]
+    )
+    assert store.purge_quote_echoes() == 0
+    texts = [m.text for m in store.recent_messages("A", 10)]
+    assert "冯智：数字游民吗？\n服药时最好不要吃柚子" in texts
+    store.close()

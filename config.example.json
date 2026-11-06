@@ -15,7 +15,7 @@
     "idle_interval_ms": 1500,
     "chat_left_px": 300,
     "header_px": 64,
-    "input_px": 160,
+    "input_px": 133,
     "chat_left_ratio": 0.26,
     "header_bottom_ratio": 0.1,
     "input_top_ratio": 0.86,
